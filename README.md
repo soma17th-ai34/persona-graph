@@ -105,6 +105,7 @@ persona-graph/
   data/
     runs/
   docs/
+    character_design.md
     project_brief.md
     demo_scenarios.md
   README.md

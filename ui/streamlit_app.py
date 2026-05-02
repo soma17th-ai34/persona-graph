@@ -136,6 +136,9 @@ def render_character(character) -> None:
   </div>
   <div style="font-size:0.86rem; margin-top:0.55rem;">상징: {character.symbol}</div>
   <div style="font-size:0.86rem; margin-top:0.25rem;">외형: {character.visual}</div>
+  <div style="font-size:0.86rem; margin-top:0.25rem;">움직임: {character.motion}</div>
+  <div style="font-size:0.86rem; margin-top:0.25rem;">촉감: {character.texture}</div>
+  <div style="font-size:0.86rem; margin-top:0.25rem;">관계성: {character.relationship}</div>
   <div style="font-size:0.86rem; margin-top:0.25rem;">말투: {character.speech_style}</div>
 </div>
 """,

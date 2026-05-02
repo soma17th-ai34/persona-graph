@@ -22,6 +22,9 @@ class Character(BaseModel):
     tagline: str
     visual: str
     speech_style: str
+    motion: str = ""
+    relationship: str = ""
+    texture: str = ""
     color: str
     accent_color: str
     symbol: str
