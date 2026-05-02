@@ -3,6 +3,7 @@ from app.agents.evaluator import EvaluatorAgent
 from app.agents.persona_generator import PersonaGenerator
 from app.agents.specialist import SpecialistAgent
 from app.agents.synthesizer import SynthesizerAgent
+from app.characters import assign_characters
 from app.llm import LLMClient
 from app.schemas import AgentMessage, SolveResponse
 
@@ -18,6 +19,7 @@ class Supervisor:
 
     def solve(self, problem: str, persona_count: int) -> SolveResponse:
         personas, persona_message = self.persona_generator.generate(problem, persona_count)
+        personas = assign_characters(personas)
         specialist_messages = [self.specialist.answer(problem, persona) for persona in personas]
         critique = self.critic.review(problem, specialist_messages)
         synthesis = self.synthesizer.synthesize(problem, specialist_messages, critique)

@@ -6,11 +6,12 @@
 
 1. 사용자가 문제를 입력합니다.
 2. Persona Generator가 필요한 페르소나 3~5개를 생성합니다.
-3. Specialist Agent들이 자기 관점으로 의견을 제시합니다.
-4. Critic Agent가 모순, 약점, 누락을 지적합니다.
-5. Synthesizer Agent가 최종 답변을 통합합니다.
-6. Evaluator Agent가 최종 결과를 점수와 총평으로 평가합니다.
-7. Streamlit UI에서 단계별 로그, 최종 결론, 평가 요약을 표시하고 실행 결과를 저장합니다.
+3. 미리 정의된 캐릭터 초안 중 하나를 각 페르소나에 임의로 배정합니다.
+4. Specialist Agent들이 자기 관점으로 의견을 제시합니다.
+5. Critic Agent가 모순, 약점, 누락을 지적합니다.
+6. Synthesizer Agent가 최종 답변을 통합합니다.
+7. Evaluator Agent가 최종 결과를 점수와 총평으로 평가합니다.
+8. Streamlit UI에서 캐릭터, 단계별 로그, 최종 결론, 평가 요약을 표시하고 실행 결과를 저장합니다.
 
 ## Setup
 
@@ -95,6 +96,7 @@ persona-graph/
       evaluator.py
       supervisor.py
     llm.py
+    characters.py
     schemas.py
     storage.py
     workflow.py

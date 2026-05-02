@@ -12,6 +12,19 @@ class Persona(BaseModel):
     role: str
     perspective: str
     priority_questions: list[str] = Field(default_factory=list)
+    character: Optional["Character"] = None
+
+
+class Character(BaseModel):
+    id: str
+    name: str
+    archetype: str
+    tagline: str
+    visual: str
+    speech_style: str
+    color: str
+    accent_color: str
+    symbol: str
 
 
 class AgentMessage(BaseModel):

@@ -80,6 +80,8 @@ def render_response(response: SolveResponse) -> None:
             with st.container(border=True):
                 st.markdown(f"**{persona.name}**")
                 st.caption(persona.role)
+                if persona.character:
+                    render_character(persona.character)
                 st.write(persona.perspective)
                 st.markdown("핵심 질문")
                 for question in persona.priority_questions:
@@ -103,6 +105,42 @@ def render_response(response: SolveResponse) -> None:
     st.markdown(response.final_answer)
     st.divider()
     render_evaluation(response.evaluation)
+
+
+def render_character(character) -> None:
+    st.markdown(
+        f"""
+<div style="
+    border-left: 5px solid {character.accent_color};
+    background: {character.color};
+    padding: 0.75rem;
+    border-radius: 0.5rem;
+    margin: 0.55rem 0 0.75rem 0;
+">
+  <div style="display:flex; align-items:center; gap:0.65rem;">
+    <div style="
+        width:2.4rem;
+        height:2.4rem;
+        border-radius:50%;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        background:{character.accent_color};
+        color:white;
+        font-weight:700;
+    ">{character.name[:1]}</div>
+    <div>
+      <div style="font-weight:700;">{character.name} · {character.archetype}</div>
+      <div style="font-size:0.88rem;">{character.tagline}</div>
+    </div>
+  </div>
+  <div style="font-size:0.86rem; margin-top:0.55rem;">상징: {character.symbol}</div>
+  <div style="font-size:0.86rem; margin-top:0.25rem;">외형: {character.visual}</div>
+  <div style="font-size:0.86rem; margin-top:0.25rem;">말투: {character.speech_style}</div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
 
 
 tab_new, tab_saved = st.tabs(["새 토론 실행", "저장된 토론 보기"])
