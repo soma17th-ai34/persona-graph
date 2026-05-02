@@ -95,6 +95,64 @@ class SpecialistAgent:
             },
         )
 
+    def reply_to_user(
+        self,
+        problem: str,
+        persona: Persona,
+        transcript: str,
+        user_content: str,
+        round_number: int,
+    ) -> AgentMessage:
+        prompt = f"""
+문제:
+{problem}
+
+페르소나:
+- 이름: {persona.name}
+- 역할: {persona.role}
+- 관점: {persona.perspective}
+- 핵심 질문: {", ".join(persona.priority_questions)}
+
+지금까지의 대화:
+{transcript}
+
+사용자의 새 의견:
+{user_content}
+
+{persona.name}의 관점에서 사용자의 새 의견에 바로 답하세요.
+반드시 자연스러운 한국어로 작성하고, 고유명사나 기술 약어 외에는 영어를 최소화하세요.
+요구사항:
+- 사용자의 의견을 한 문장으로 받아들이거나 재정의하세요.
+- 자기 역할과 관점에서 동의, 반박, 보완 중 하나를 분명히 하세요.
+- 다른 에이전트의 이전 주장과 연결할 수 있으면 짧게 연결하세요.
+- 다음 의사결정에 필요한 기준이나 질문을 하나 남기세요.
+- 4~7문장으로, 단체 대화방에서 말하듯 작성하세요.
+"""
+        result = self.llm.complete(
+            system_prompt="당신은 한국어 다중 에이전트 단체 대화방에 참여한 전문가입니다. 사용자의 새 의견에 직접 반응하세요.",
+            user_prompt=prompt,
+            temperature=0.45,
+        )
+        content = (
+            result.content
+            if result.used_llm and result.content
+            else self._user_reply_fallback(persona, user_content, round_number)
+        )
+        return AgentMessage(
+            stage="debate",
+            agent_id=persona.id,
+            agent_name=persona.name,
+            role=persona.role,
+            content=content,
+            metadata={
+                "source": "llm" if result.used_llm and result.content else "fallback",
+                "error": result.error,
+                "round": round_number,
+                "phase": "user_response",
+                "responds_to": "user",
+            },
+        )
+
     def _fallback(self, problem: str, persona: Persona) -> str:
         questions = "\n".join(f"- {question}" for question in persona.priority_questions)
         return f"""1. 핵심 판단
@@ -114,3 +172,10 @@ class SpecialistAgent:
 저는 {persona.name} 관점에서 "{persona.perspective}" 기준이 빠지면 결론이 좋아 보여도 실제 선택으로 이어지기 어렵다고 봅니다.
 앞선 발언의 큰 방향에는 동의하지만, 지금 단계에서는 범위, 성공 기준, 데모 실패 시 대안 중 하나를 더 명확히 해야 합니다.
 그래서 다음 발언자는 이 아이디어를 실제로 2주 안에 보여줄 수 있는 최소 단위가 무엇인지 먼저 정해주면 좋겠습니다."""
+
+    def _user_reply_fallback(self, persona: Persona, user_content: str, round_number: int) -> str:
+        return f"""{round_number}번째 사용자 개입에 답하겠습니다. 사용자의 새 의견은 "{user_content}"로 이해했습니다.
+{persona.name} 관점에서는 이 의견을 "{persona.perspective}" 기준으로 다시 좁히는 것이 중요합니다.
+방향에는 동의하지만, 실제 결정으로 이어지려면 우선순위와 제외할 범위를 더 분명히 해야 합니다.
+다음 판단 기준은 이 의견을 반영했을 때 데모 안정성, 구현 난이도, 설득력이 함께 좋아지는지입니다.
+다음 에이전트는 이 조건을 기준으로 무엇을 줄이고 무엇을 남길지 이어서 정리하면 좋겠습니다."""

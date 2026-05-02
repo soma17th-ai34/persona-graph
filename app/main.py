@@ -3,9 +3,9 @@ from fastapi import FastAPI
 from fastapi import HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.schemas import RunSummary, SolveRequest, SolveResponse
+from app.schemas import ContinueRequest, RunSummary, SolveRequest, SolveResponse
 from app.storage import list_runs, load_run, save_run
-from app.workflow import solve_problem
+from app.workflow import continue_discussion, solve_problem
 
 
 load_dotenv()
@@ -54,3 +54,25 @@ def run_detail(run_id: str) -> SolveResponse:
         return load_run(run_id)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Run not found") from None
+
+
+@app.post("/runs/{run_id}/messages", response_model=SolveResponse)
+def continue_run(run_id: str, request: ContinueRequest) -> SolveResponse:
+    content = request.content.strip()
+    if not content:
+        raise HTTPException(status_code=422, detail="Message content is required")
+
+    try:
+        response = load_run(run_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Run not found") from None
+
+    updated = continue_discussion(
+        response=response,
+        user_content=content,
+        max_agents=request.max_agents,
+        use_llm=request.use_llm,
+        model=request.model,
+        temperature=request.temperature,
+    )
+    return save_run(updated)

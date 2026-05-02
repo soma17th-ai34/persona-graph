@@ -17,7 +17,7 @@ import streamlit as st
 from app.characters import CHARACTER_POOL
 from app.schemas import Evaluation, SolveResponse
 from app.storage import list_runs, load_run, save_run
-from app.workflow import solve_problem
+from app.workflow import continue_discussion, solve_problem
 
 
 load_dotenv(os.path.join(ROOT_DIR, ".env"))
@@ -30,6 +30,7 @@ SAMPLE_PROBLEMS = {
 
 STAGE_LABELS = {
     "persona_generation": "페르소나 생성",
+    "user": "사용자 의견",
     "moderator": "사회자 진행",
     "specialist": "전문가 의견",
     "debate": "상호 응답",
@@ -327,10 +328,19 @@ def render_message_timeline(response: SolveResponse) -> None:
 def message_section_label(message) -> str:
     if message.stage == "persona_generation":
         return "준비 단계"
+    if message.stage == "user":
+        round_value = message.metadata.get("round")
+        return f"{round_value}라운드 사용자 개입" if round_value else "사용자 개입"
     if message.stage == "moderator" and message.metadata.get("phase") == "opening":
         return "오프닝"
     if message.stage == "specialist":
         return "첫 의견"
+    if message.stage == "debate" and message.metadata.get("phase") == "user_response":
+        round_value = message.metadata.get("round")
+        return f"{round_value}라운드 Agent 응답" if round_value else "Agent 응답"
+    if message.stage == "synthesizer" and message.metadata.get("phase") == "followup_synthesis":
+        round_value = message.metadata.get("round")
+        return f"{round_value}라운드 중간 종합" if round_value else "중간 종합"
     if message.stage in {"moderator", "debate"} and message.metadata.get("round"):
         return f"{message.metadata['round']}라운드 상호 응답"
     if message.stage == "critic":
@@ -351,6 +361,7 @@ def message_avatar(message, character) -> str | None:
 def message_avatar_text(message) -> str:
     return {
         "persona_generation": "PG",
+        "user": "나",
         "moderator": "MOD",
         "critic": "CR",
         "synthesizer": "FIN",
@@ -409,6 +420,41 @@ def render_message_content(content: str) -> None:
     safe_content = html.escape(content)
     safe_content = re.sub(r"\*\*([^*\n]+?)\*\*", r"<strong>\1</strong>", safe_content)
     st.markdown(safe_content, unsafe_allow_html=True)
+
+
+def render_discussion_input(
+    response: SolveResponse,
+    max_agents: int,
+    use_llm: bool,
+    model: str | None,
+    temperature: float,
+    key_prefix: str,
+) -> None:
+    if not response.run_id:
+        return
+
+    prompt = st.chat_input("토론에 의견을 추가하세요...", key=f"{key_prefix}_chat_input")
+    if not prompt:
+        return
+
+    content = prompt.strip()
+    if not content:
+        st.warning("의견을 한 글자 이상 입력해주세요.")
+        return
+
+    with st.spinner("Agent들이 현재 의견에 이어서 답변하는 중입니다..."):
+        updated = continue_discussion(
+            response=response,
+            user_content=content,
+            max_agents=max_agents,
+            use_llm=use_llm,
+            model=model,
+            temperature=temperature,
+        )
+        updated = save_run(updated)
+
+    st.session_state["last_response"] = updated
+    st.rerun()
 
 
 def render_character(character) -> None:
@@ -522,8 +568,9 @@ tab_new, tab_saved = st.tabs(["새 토론 실행", "저장된 토론 보기"])
 with tab_new:
     with st.sidebar:
         st.header("실행 설정")
-        persona_count = st.slider("페르소나 수", min_value=3, max_value=5, value=4)
+        persona_count = st.slider("페르소나 수", min_value=3, max_value=5, value=5)
         debate_rounds = st.slider("상호 응답 라운드", min_value=1, max_value=3, value=1)
+        max_reply_agents = st.slider("응답 에이전트 수", min_value=1, max_value=3, value=2)
         use_llm = st.toggle("LLM API 사용", value=True)
         model = st.text_input("모델명", value=os.getenv("PERSONA_GRAPH_MODEL", "gpt-5.4-mini"))
         temperature = st.slider("Temperature", min_value=0.0, max_value=1.2, value=0.35, step=0.05)
@@ -564,8 +611,24 @@ with tab_new:
 
         st.session_state["last_response"] = response
         render_response(response)
+        render_discussion_input(
+            response=response,
+            max_agents=max_reply_agents,
+            use_llm=use_llm,
+            model=model.strip() or None,
+            temperature=temperature,
+            key_prefix="new",
+        )
     elif st.session_state.get("last_response"):
         render_response(st.session_state["last_response"])
+        render_discussion_input(
+            response=st.session_state["last_response"],
+            max_agents=max_reply_agents,
+            use_llm=use_llm,
+            model=model.strip() or None,
+            temperature=temperature,
+            key_prefix="new",
+        )
     else:
         st.info("왼쪽에서 샘플을 불러오거나 직접 문제를 입력한 뒤 에이전트 토론을 시작하세요.")
 
@@ -586,3 +649,11 @@ with tab_saved:
             st.error("선택한 로그를 찾을 수 없습니다.")
         else:
             render_response(saved_response)
+            render_discussion_input(
+                response=saved_response,
+                max_agents=max_reply_agents,
+                use_llm=use_llm,
+                model=model.strip() or None,
+                temperature=temperature,
+                key_prefix="saved",
+            )
