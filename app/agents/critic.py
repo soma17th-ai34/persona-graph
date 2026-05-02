@@ -11,21 +11,22 @@ class CriticAgent:
             f"[{message.agent_name} / {message.role}]\n{message.content}" for message in specialist_messages
         )
         prompt = f"""
-Problem:
+문제:
 {problem}
 
-Specialist opinions:
+전문가 의견:
 {transcript}
 
-Review the discussion. Find contradictions, weak assumptions, missing constraints, and next questions.
-Return a concise critique in Korean with:
+토론을 검토하고 모순, 약한 가정, 누락된 제약, 다음 질문을 찾으세요.
+반드시 자연스러운 한국어로 작성하고, 고유명사나 기술 약어 외에는 영어를 최소화하세요.
+다음 구조로 간결한 비판을 반환하세요.
 1. 모순 또는 충돌
 2. 약한 가정
 3. 누락된 관점
 4. 최종 통합 전에 고쳐야 할 점
 """
         result = self.llm.complete(
-            system_prompt="You are a sharp but constructive critic in a multi-agent workflow.",
+            system_prompt="당신은 한국어 다중 에이전트 워크플로의 날카롭지만 건설적인 비판자입니다.",
             user_prompt=prompt,
             temperature=0.2,
         )
@@ -33,8 +34,8 @@ Return a concise critique in Korean with:
         return AgentMessage(
             stage="critic",
             agent_id="critic",
-            agent_name="Critic Agent",
-            role="Finds contradictions, weak assumptions, and missing constraints",
+            agent_name="비판 에이전트",
+            role="모순, 약한 가정, 누락된 제약을 찾는 역할",
             content=content,
             metadata={"source": "llm" if result.used_llm and result.content else "fallback", "error": result.error},
         )

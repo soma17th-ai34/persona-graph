@@ -26,7 +26,7 @@ cp .env.example .env
 
 ```bash
 OPENAI_API_KEY=your_api_key_here
-PERSONA_GRAPH_MODEL=gpt-4.1-mini
+PERSONA_GRAPH_MODEL=gpt-5.4-mini
 ```
 
 `OPENAI_BASE_URL`을 설정하면 OpenAI-compatible provider도 사용할 수 있습니다.

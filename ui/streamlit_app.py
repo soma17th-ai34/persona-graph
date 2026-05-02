@@ -22,11 +22,24 @@ SAMPLE_PROBLEMS = {
     "Physical AI 아이디어 검증": "저예산으로 Physical AI 프로젝트를 시작하고 싶다. 하드웨어 구매 전에 시뮬레이션과 소프트웨어 MVP로 검증할 방법을 찾아줘.",
 }
 
+STAGE_LABELS = {
+    "persona_generation": "페르소나 생성",
+    "specialist": "전문가 의견",
+    "critic": "비판",
+    "synthesizer": "최종 종합",
+}
+
+SOURCE_LABELS = {
+    "llm": "LLM",
+    "fallback": "기본 응답",
+    "unknown": "알 수 없음",
+}
+
 
 st.set_page_config(page_title="PersonaGraph", page_icon="PG", layout="wide")
 
 st.title("PersonaGraph")
-st.caption("문제를 입력하면 여러 AI Agent가 각자의 페르소나로 토론하고, 비판과 종합을 거쳐 최종 해결안을 만듭니다.")
+st.caption("문제를 입력하면 여러 AI 에이전트가 각자의 페르소나로 토론하고, 비판과 종합을 거쳐 최종 해결안을 만듭니다.")
 
 
 def average_score(evaluation: Evaluation) -> float:
@@ -62,7 +75,7 @@ def render_response(response: SolveResponse) -> None:
     left, right = st.columns([0.38, 0.62], gap="large")
 
     with left:
-        st.subheader("생성된 Persona")
+        st.subheader("생성된 페르소나")
         for persona in response.personas:
             with st.container(border=True):
                 st.markdown(f"**{persona.name}**")
@@ -73,15 +86,17 @@ def render_response(response: SolveResponse) -> None:
                     st.markdown(f"- {question}")
 
     with right:
-        st.subheader("Agent 발언 흐름")
+        st.subheader("에이전트 발언 흐름")
         for message in response.messages:
             source = message.metadata.get("source", "unknown")
-            title = f"{message.agent_name} · {message.stage} · {source}"
+            stage_label = STAGE_LABELS.get(message.stage, message.stage)
+            source_label = SOURCE_LABELS.get(source, source)
+            title = f"{message.agent_name} · {stage_label} · {source_label}"
             with st.expander(title, expanded=message.stage in {"critic", "synthesizer"}):
                 st.caption(message.role)
                 st.markdown(message.content)
                 if message.metadata.get("error") and source == "fallback":
-                    st.caption(f"fallback reason: {message.metadata['error']}")
+                    st.caption(f"기본 응답 사용 이유: {message.metadata['error']}")
 
     st.divider()
     st.subheader("최종 결론")
@@ -95,9 +110,9 @@ tab_new, tab_saved = st.tabs(["새 토론 실행", "저장된 토론 보기"])
 with tab_new:
     with st.sidebar:
         st.header("실행 설정")
-        persona_count = st.slider("Persona 수", min_value=3, max_value=5, value=4)
+        persona_count = st.slider("페르소나 수", min_value=3, max_value=5, value=4)
         use_llm = st.toggle("LLM API 사용", value=True)
-        model = st.text_input("모델명", value=os.getenv("PERSONA_GRAPH_MODEL", "gpt-4.1-mini"))
+        model = st.text_input("모델명", value=os.getenv("PERSONA_GRAPH_MODEL", "gpt-5.4-mini"))
         temperature = st.slider("Temperature", min_value=0.0, max_value=1.2, value=0.35, step=0.05)
         api_status = "설정됨" if os.getenv("OPENAI_API_KEY") else "미설정"
         st.info(f"OPENAI_API_KEY: {api_status}")
@@ -116,7 +131,7 @@ with tab_new:
         placeholder="예: 2주 안에 데모 가능한 다중 에이전트 AI 프로젝트를 만들고 싶다...",
     )
 
-    run = st.button("Agent 토론 시작", type="primary", use_container_width=True)
+    run = st.button("에이전트 토론 시작", type="primary", use_container_width=True)
 
     if run:
         if len(problem.strip()) < 5:
@@ -138,7 +153,7 @@ with tab_new:
     elif st.session_state.get("last_response"):
         render_response(st.session_state["last_response"])
     else:
-        st.info("왼쪽에서 샘플을 불러오거나 직접 문제를 입력한 뒤 Agent 토론을 시작하세요.")
+        st.info("왼쪽에서 샘플을 불러오거나 직접 문제를 입력한 뒤 에이전트 토론을 시작하세요.")
 
 with tab_saved:
     summaries = list_runs()

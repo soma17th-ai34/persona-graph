@@ -5,8 +5,9 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
+from dotenv import load_dotenv
 
-DEFAULT_MODEL = "gpt-4.1-mini"
+DEFAULT_MODEL = "gpt-5.4-mini"
 
 
 @dataclass
@@ -20,6 +21,7 @@ class LLMClient:
     """Small OpenAI-compatible LLM wrapper with a graceful local fallback path."""
 
     def __init__(self, model: str | None = None, temperature: float = 0.35, enabled: bool = True):
+        load_dotenv()
         self.model = model or os.getenv("PERSONA_GRAPH_MODEL", DEFAULT_MODEL)
         self.temperature = temperature
         self.api_key = os.getenv("OPENAI_API_KEY")

@@ -19,28 +19,32 @@ class EvaluatorAgent:
             f"[{message.agent_name} / {message.role}]\n{message.content}" for message in specialist_messages
         )
         prompt = f"""
-Problem:
+문제:
 {problem}
 
-Specialist opinions:
+전문가 의견:
 {transcript}
 
-Critique:
+비판:
 {critique.content}
 
-Final synthesis:
+최종 종합:
 {synthesis.content}
 
-Evaluate the final result. Return only a JSON object with:
+최종 결과를 평가하세요. 반드시 JSON 객체만 반환하세요.
 - consistency: integer 1-5
 - specificity: integer 1-5
 - risk_awareness: integer 1-5
 - feasibility: integer 1-5
-- overall_comment: one concise Korean sentence
-- improvement_suggestions: array of 1 to 3 concise Korean strings
+- overall_comment: 한국어 한 문장 총평
+- improvement_suggestions: 한국어 개선 제안 1~3개 배열
+
+출력 규칙:
+- 한국어 사용자를 위한 자연스러운 한국어로 작성하세요.
+- OpenAI, API, MVP처럼 필요한 고유명사나 기술 약어 외에는 영어를 쓰지 마세요.
 """
         result = self.llm.complete(
-            system_prompt="You evaluate multi-agent reasoning quality. Return strict JSON only.",
+            system_prompt="당신은 한국어 다중 에이전트 추론 품질을 평가합니다. 엄격한 JSON만 반환하세요.",
             user_prompt=prompt,
             temperature=0.15,
         )

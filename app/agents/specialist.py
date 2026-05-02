@@ -8,25 +8,26 @@ class SpecialistAgent:
 
     def answer(self, problem: str, persona: Persona) -> AgentMessage:
         prompt = f"""
-Problem:
+문제:
 {problem}
 
-Persona:
-- Name: {persona.name}
-- Role: {persona.role}
-- Perspective: {persona.perspective}
-- Priority questions: {", ".join(persona.priority_questions)}
+페르소나:
+- 이름: {persona.name}
+- 역할: {persona.role}
+- 관점: {persona.perspective}
+- 핵심 질문: {", ".join(persona.priority_questions)}
 
-Write a practical opinion from this persona's point of view.
-Use this structure:
+이 페르소나의 관점에서 실용적인 의견을 작성하세요.
+반드시 자연스러운 한국어로 작성하고, 고유명사나 기술 약어 외에는 영어를 최소화하세요.
+다음 구조를 사용하세요.
 1. 핵심 판단
 2. 근거
 3. 실행 제안
 4. 주의할 점
-Keep it concise and specific.
+간결하고 구체적으로 작성하세요.
 """
         result = self.llm.complete(
-            system_prompt="You are one specialist in a multi-agent problem-solving discussion.",
+            system_prompt="당신은 한국어 다중 에이전트 문제 해결 토론에 참여한 전문가입니다. 모든 답변은 자연스러운 한국어로 작성하세요.",
             user_prompt=prompt,
         )
         content = result.content if result.used_llm and result.content else self._fallback(problem, persona)

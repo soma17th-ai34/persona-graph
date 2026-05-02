@@ -16,17 +16,18 @@ class SynthesizerAgent:
             f"[{message.agent_name} / {message.role}]\n{message.content}" for message in specialist_messages
         )
         prompt = f"""
-Problem:
+문제:
 {problem}
 
-Specialist opinions:
+전문가 의견:
 {transcript}
 
-Critique:
+비판:
 {critique.content}
 
-Synthesize a final answer that resolves conflicts and turns the discussion into an actionable plan.
-Write in Korean with:
+충돌을 정리하고 토론을 실행 가능한 계획으로 통합한 최종 답변을 작성하세요.
+반드시 자연스러운 한국어로 작성하고, 고유명사나 기술 약어 외에는 영어를 최소화하세요.
+다음 구조를 사용하세요.
 1. 최종 결론
 2. 선택한 방향
 3. 실행 단계
@@ -34,7 +35,7 @@ Write in Korean with:
 5. 다음 24시간 액션
 """
         result = self.llm.complete(
-            system_prompt="You synthesize multi-agent debate into clear final decisions and next actions.",
+            system_prompt="당신은 한국어 다중 에이전트 토론을 명확한 최종 결정과 다음 행동으로 통합합니다.",
             user_prompt=prompt,
             temperature=0.3,
         )
@@ -42,8 +43,8 @@ Write in Korean with:
         return AgentMessage(
             stage="synthesizer",
             agent_id="synthesizer",
-            agent_name="Synthesizer Agent",
-            role="Integrates the debate into a final answer",
+            agent_name="종합 에이전트",
+            role="토론을 최종 답변으로 통합하는 역할",
             content=content,
             metadata={"source": "llm" if result.used_llm and result.content else "fallback", "error": result.error},
         )
@@ -59,10 +60,10 @@ Write in Korean with:
 
 3. 실행 단계
 - 문제 입력 폼과 에이전트 수 설정을 만든다.
-- Persona Generator가 3~5개 역할을 만든다.
-- Specialist Agent들이 각자 의견을 낸다.
-- Critic Agent가 모순, 약한 가정, 누락을 지적한다.
-- Synthesizer Agent가 최종 결론과 다음 액션으로 정리한다.
+- 페르소나 생성기가 3~5개 역할을 만든다.
+- 전문가 에이전트들이 각자 의견을 낸다.
+- 비판 에이전트가 모순, 약한 가정, 누락을 지적한다.
+- 종합 에이전트가 최종 결론과 다음 액션으로 정리한다.
 
 4. 리스크와 대응
 {critique.content}
