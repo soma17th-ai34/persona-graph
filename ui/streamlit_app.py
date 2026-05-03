@@ -33,7 +33,7 @@ STAGE_LABELS = {
     "user": "사용자 의견",
     "moderator": "사회자 진행",
     "specialist": "전문가 의견",
-    "debate": "상호 응답",
+    "debate": "Agent 대화",
     "critic": "비판",
     "synthesizer": "최종 종합",
 }
@@ -64,7 +64,12 @@ CHARACTER_IMAGE_PATHS = {
 CHARACTERS_BY_ID = {character.id: character for character in CHARACTER_POOL}
 
 
-st.set_page_config(page_title="PersonaGraph", page_icon="PG", layout="wide")
+st.set_page_config(
+    page_title="PersonaGraph",
+    page_icon="PG",
+    layout="wide",
+    initial_sidebar_state="collapsed",
+)
 
 
 def average_score(evaluation: Evaluation) -> float:
@@ -100,14 +105,14 @@ def render_app_header() -> None:
         f"""
 <style>
 .pg-hero {{
-    min-height: 7.5rem;
+    min-height: 8.4rem;
     border-radius: 8px;
-    padding: clamp(1rem, 2.4vw, 1.6rem);
+    padding: clamp(1rem, 2.4vw, 1.55rem);
     margin-bottom: 1rem;
     display: flex;
     align-items: center;
     background-image:
-        linear-gradient(90deg, rgba(255, 255, 255, 0.96) 0%, rgba(255, 255, 255, 0.88) 54%, rgba(255, 255, 255, 0.30) 100%),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.98) 0%, rgba(255, 255, 255, 0.91) 52%, rgba(255, 255, 255, 0.34) 100%),
         url("{hero_uri}");
     background-size: cover;
     background-position: center;
@@ -136,6 +141,24 @@ def render_app_header() -> None:
     line-height: 1.5;
     max-width: 38rem;
     margin: 0;
+}}
+.pg-flow {{
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.42rem;
+    margin-top: 0.82rem;
+}}
+.pg-flow-step {{
+    display: inline-flex;
+    align-items: center;
+    min-height: 1.7rem;
+    border-radius: 999px;
+    padding: 0.18rem 0.58rem;
+    background: rgba(255, 255, 255, 0.76);
+    border: 1px solid rgba(47, 128, 237, 0.16);
+    color: #334155;
+    font-size: 0.78rem;
+    font-weight: 700;
 }}
 .pg-network {{
     border: 1px solid rgba(47, 128, 237, 0.14);
@@ -183,8 +206,8 @@ def render_app_header() -> None:
     flex: 0 0 auto;
 }}
 .pg-card-image {{
-    width: 3.6rem;
-    height: 4.8rem;
+    width: 3.4rem;
+    height: 4.35rem;
     border-radius: 10px;
     object-fit: contain;
     background: #f8f5ef;
@@ -284,33 +307,94 @@ def render_app_header() -> None:
     background: #eefdf3;
     color: #15803d;
 }}
-.pg-message-summary {{
+.pg-message-preview {{
     color: #111827;
     font-size: 0.95rem;
     line-height: 1.55;
-    margin: 0.45rem 0 0.15rem 0;
+    margin: 0.42rem 0 0.12rem 0;
+}}
+.pg-message-roleline {{
+    color: #6b7280;
+    font-size: 0.82rem;
+    line-height: 1.45;
+    margin-top: 0.12rem;
+}}
+.pg-roster-card {{
+    min-height: 8.2rem;
+}}
+.pg-roster-name {{
+    color: #111827;
+    font-size: 1rem;
+    font-weight: 800;
+    line-height: 1.35;
+    margin-bottom: 0.18rem;
+    word-break: keep-all;
+    overflow-wrap: anywhere;
+}}
+.pg-roster-role {{
+    display: inline-flex;
+    align-items: center;
+    max-width: 100%;
+    border-radius: 999px;
+    padding: 0.16rem 0.54rem;
+    background: #eff6ff;
+    color: #1d4ed8;
+    font-size: 0.78rem;
+    font-weight: 700;
+    line-height: 1.35;
+    word-break: keep-all;
+}}
+.pg-roster-summary {{
+    color: #4b5563;
+    font-size: 0.82rem;
+    line-height: 1.45;
+    margin-top: 0.42rem;
+}}
+.pg-roster-selected {{
+    color: #15803d;
+    font-size: 0.78rem;
+    font-weight: 800;
+    margin-top: 0.34rem;
+}}
+.pg-followup-panel {{
+    border: 1px solid rgba(47, 128, 237, 0.18);
+    border-radius: 8px;
+    background: #fbfcff;
+    padding: 0.9rem 1rem;
+    margin: 0.6rem 0 1rem 0;
+}}
+.pg-followup-title {{
+    color: #111827;
+    font-size: 0.98rem;
+    font-weight: 800;
+    line-height: 1.35;
+}}
+.pg-followup-meta {{
+    color: #4b5563;
+    font-size: 0.84rem;
+    line-height: 1.45;
+    margin-top: 0.18rem;
+}}
+.pg-eval-compact {{
+    margin-top: 0.55rem;
+    padding: 0.3rem 0 0.25rem 0;
+}}
+.pg-eval-line {{
+    color: #374151;
+    font-size: 0.86rem;
+    line-height: 1.45;
+}}
+.pg-eval-line strong {{
+    color: #111827;
+}}
+.pg-eval-comment {{
+    color: #6b7280;
+    font-size: 0.82rem;
+    line-height: 1.45;
+    margin-top: 0.2rem;
 }}
 div[data-testid="stAppViewContainer"] .main .block-container {{
-    padding-bottom: 7rem;
-}}
-div[data-testid="stChatInput"] {{
-    position: fixed;
-    left: 50%;
-    bottom: 1rem;
-    transform: translateX(-50%);
-    width: min(56rem, calc(100vw - 2rem));
-    z-index: 1000;
-}}
-div[data-testid="stChatInput"] > div {{
-    border-radius: 16px;
-    background: rgba(255, 255, 255, 0.98);
-    box-shadow: 0 16px 38px rgba(31, 41, 55, 0.16);
-}}
-div[data-testid="stChatInputTextArea"] {{
-    font-size: 0.95rem;
-}}
-button[data-testid="stChatInputSubmitButton"] {{
-    border-radius: 12px;
+    padding-bottom: 4rem;
 }}
 .pg-agent-name {{
     color: #111827;
@@ -369,6 +453,9 @@ button[data-testid="stChatInputSubmitButton"] {{
         min-height: 7rem;
         background-position: 58% center;
     }}
+    .pg-flow-step {{
+        font-size: 0.74rem;
+    }}
     .pg-agent-node {{
         min-width: 100%;
     }}
@@ -382,6 +469,12 @@ button[data-testid="stChatInputSubmitButton"] {{
     <div class="pg-hero-kicker">multi-agent persona debate</div>
     <h1>PersonaGraph</h1>
     <p>문제를 입력하면 여러 AI 에이전트가 각자의 페르소나로 토론하고, 비판과 종합을 거쳐 최종 해결안을 만듭니다.</p>
+    <div class="pg-flow" aria-label="PersonaGraph flow">
+      <span class="pg-flow-step">문제 입력</span>
+      <span class="pg-flow-step">페르소나 토론</span>
+      <span class="pg-flow-step">비판 검토</span>
+      <span class="pg-flow-step">결론 평가</span>
+    </div>
   </div>
 </section>
 """,
@@ -390,28 +483,27 @@ button[data-testid="stChatInputSubmitButton"] {{
 
 
 def render_evaluation(evaluation: Evaluation) -> None:
-    st.subheader("평가 요약")
     score = average_score(evaluation)
-    with st.container(border=True):
-        score_col, verdict_col = st.columns([0.22, 0.78], gap="large")
-        with score_col:
-            st.metric("평균 점수", f"{score}/5")
-        with verdict_col:
-            st.markdown(f"**판정:** {score_band_label(score)}")
-            st.caption("Evaluator가 일관성, 구체성, 리스크 반영, 실행 가능성을 기준으로 다시 점검한 결과입니다.")
-
-        metric_cols = st.columns(4)
-        metric_cols[0].metric("일관성", f"{evaluation.consistency}/5")
-        metric_cols[1].metric("구체성", f"{evaluation.specificity}/5")
-        metric_cols[2].metric("리스크 반영", f"{evaluation.risk_awareness}/5")
-        metric_cols[3].metric("실행 가능성", f"{evaluation.feasibility}/5")
-
-        st.markdown("**평가 한줄**")
-        st.info(evaluation.overall_comment)
+    st.markdown(
+        f"""
+<div class="pg-eval-compact">
+  <div class="pg-eval-line">
+    <strong>평가 요약</strong> · 평균 {score}/5 · {html.escape(score_band_label(score))}
+  </div>
+  <div class="pg-eval-comment">{html.escape(evaluation.overall_comment)}</div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+    with st.expander("평가 세부 보기", expanded=False):
+        st.markdown(f"- 일관성: {evaluation.consistency}/5")
+        st.markdown(f"- 구체성: {evaluation.specificity}/5")
+        st.markdown(f"- 리스크 반영: {evaluation.risk_awareness}/5")
+        st.markdown(f"- 실행 가능성: {evaluation.feasibility}/5")
         if evaluation.improvement_suggestions:
-            with st.expander("보완 제안 보기", expanded=False):
-                for suggestion in evaluation.improvement_suggestions:
-                    st.markdown(f"- {suggestion}")
+            st.markdown("보완 제안")
+            for suggestion in evaluation.improvement_suggestions:
+                st.markdown(f"- {suggestion}")
 
 
 def score_band_label(score: float) -> str:
@@ -468,7 +560,6 @@ def render_response(
         if response.run_id:
             st.markdown(f"- run_id: `{response.run_id}`")
         st.markdown(f"- 사용한 응답 방식: `{status}`")
-    st.caption("화면 흐름: 참여 Agent 확인 -> Agent 정보 선택 -> 라운드별 대화 확인 -> 하단 입력창으로 의견 추가 -> 결론 확인")
     selected_agent_id = selected_network_agent_id(response.personas, view_key)
     selected_agent_id = render_agent_network(response.personas, selected_agent_id, view_key)
     render_selected_agent_info(response.personas, selected_agent_id)
@@ -486,11 +577,9 @@ def render_response(
             temperature=temperature,
             key_prefix=input_key_prefix or view_key,
         )
-        st.divider()
 
     render_quick_decision_bar(response)
     render_final_answer(response)
-    st.divider()
     render_evaluation(response.evaluation)
 
 
@@ -620,7 +709,7 @@ def round_label(round_number: int, raw_messages, kind: str) -> str:
         return f"{round_number}라운드 · 첫 의견"
     if kind == "user":
         return f"{round_number}라운드 · 사용자 의견 반영"
-    return f"{round_number}라운드 · Agent 상호 응답"
+    return f"{round_number}라운드 · Agent 이어 말하기"
 
 
 def compact_round_messages(messages) -> list:
@@ -661,7 +750,7 @@ def round_caption(messages, raw_messages, kind: str) -> str:
     elif kind == "user":
         caption = f"사용자 의견 포함 · Agent {agent_count}명 응답 · {len(messages)}개 핵심 발언"
     else:
-        caption = f"Agent {agent_count}명 상호 응답 · {len(messages)}개 핵심 발언"
+        caption = f"Agent {agent_count}명 이어 말함 · {len(messages)}개 핵심 발언"
     if hidden_count:
         caption = f"{caption} · 이전 발언 {hidden_count}개 압축"
     return caption
@@ -687,10 +776,10 @@ def render_chat_message(message, personas_by_id) -> None:
         else None
     )
     avatar = message_avatar(message, character)
-    source = message.metadata.get("source", "unknown")
     stage_label = chat_stage_label(message)
-    source_label = SOURCE_LABELS.get(source, source)
-    summary = summarize_message(message.content, max_length=92)
+    meta_label = message_meta_label(message, stage_label)
+    preview = preview_message(message.content)
+    role_line = message_role_line(message)
 
     with st.container(border=True):
         avatar_col, content_col = st.columns([0.12, 0.88], gap="small")
@@ -704,15 +793,15 @@ def render_chat_message(message, personas_by_id) -> None:
             st.markdown(
                 f"""
 <div class="pg-speaker-line">
-  <span class="{chip_class}">발언자 · {html.escape(message.agent_name)}</span>
-  <span class="pg-round-meta">{html.escape(stage_label)} · {html.escape(source_label)}</span>
+  <span class="{chip_class}">{html.escape(message.agent_name)}</span>
+  <span class="pg-round-meta">{html.escape(meta_label)}</span>
 </div>
-<div class="pg-message-summary"><strong>요약:</strong> {html.escape(summary)}</div>
+<div class="pg-message-preview">{html.escape(preview)}</div>
+{f'<div class="pg-message-roleline">{html.escape(role_line)}</div>' if role_line else ''}
 """,
                 unsafe_allow_html=True,
             )
-            st.caption(f"역할: {message.role}")
-            with st.expander("자세히", expanded=False):
+            with st.expander("전체 발언 보기", expanded=False):
                 render_message_content(message.content)
 
 
@@ -728,10 +817,33 @@ def chat_stage_label(message) -> str:
     if message.stage == "specialist":
         return "첫 의견"
     if message.stage == "debate" and message.metadata.get("phase") == "user_response":
-        return "사용자 의견 응답"
+        return "Agent 답변"
     if message.stage == "synthesizer" and message.metadata.get("phase") == "followup_synthesis":
-        return "중간 종합"
+        return "중간 정리"
+    if message.stage == "debate":
+        return "Agent 대화"
+    if message.stage == "user":
+        return "내 의견"
     return STAGE_LABELS.get(message.stage, message.stage)
+
+
+def message_meta_label(message, stage_label: str) -> str:
+    source = message.metadata.get("source", "unknown")
+    if message.stage == "user":
+        return stage_label
+    if source == "fallback":
+        return f"{stage_label} · 기본 응답"
+    return stage_label
+
+
+def message_role_line(message) -> str:
+    if message.stage == "user":
+        return ""
+    if message.stage == "synthesizer":
+        return "현재까지의 흐름을 반영한 정리"
+    if not message.role:
+        return ""
+    return f"관점 · {trim_summary(message.role, 80)}"
 
 
 def render_supporting_logs(messages) -> None:
@@ -769,7 +881,7 @@ def message_section_label(message) -> str:
         round_value = message.metadata.get("round")
         return f"{round_value}라운드 중간 종합" if round_value else "중간 종합"
     if message.stage in {"moderator", "debate"} and message.metadata.get("round"):
-        return f"{message.metadata['round']}라운드 상호 응답"
+        return f"{message.metadata['round']}라운드 Agent 대화"
     if message.stage == "critic":
         return "비판 검토"
     if message.stage == "synthesizer":
@@ -795,6 +907,20 @@ def message_avatar_text(message) -> str:
     }.get(message.stage, message.agent_name[:2].upper())
 
 
+def preview_message(content: str, max_length: int = 180) -> str:
+    lines = [normalize_summary_text(line) for line in content.splitlines() if line.strip()]
+    preview_lines: list[str] = []
+    for line in lines:
+        if not line or is_structural_heading(line):
+            continue
+        preview_lines.append(line)
+        if len(" ".join(preview_lines)) >= max_length * 0.7 or len(preview_lines) >= 2:
+            break
+
+    preview = " ".join(preview_lines) or normalize_summary_text(content)
+    return trim_summary(preview, max_length)
+
+
 def summarize_message(content: str, max_length: int = 115) -> str:
     lines = [line.strip() for line in content.splitlines() if line.strip()]
     for line in lines:
@@ -808,6 +934,7 @@ def normalize_summary_text(text: str) -> str:
     cleaned = re.sub(r"\*\*([^*]+?)\*\*", r"\1", text)
     cleaned = re.sub(r"^[-*]\s+", "", cleaned)
     cleaned = re.sub(r"^\d+[.)]\s+", "", cleaned)
+    cleaned = re.sub(r"^(요약|정리)\s*[:：]\s*", "", cleaned)
     cleaned = re.sub(r"\s+", " ", cleaned)
     return cleaned.strip()
 
@@ -867,12 +994,28 @@ def render_discussion_input(
     if not response.run_id:
         return
 
-    st.caption(f"의견을 보내면 현재 대화방 Agent 중 최대 {max_agents}명이 이어서 답합니다.")
-    prompt = st.chat_input(
-        "이 라운드에 의견을 추가하세요...",
-        key=f"{key_prefix}_chat_input",
+    st.markdown(
+        f"""
+<div class="pg-followup-panel">
+  <div class="pg-followup-title">의견 추가</div>
+  <div class="pg-followup-meta">현재 대화방 Agent 중 최대 {max_agents}명이 이어서 답하고, 결론이 다시 갱신됩니다.</div>
+</div>
+""",
+        unsafe_allow_html=True,
     )
-    if not prompt:
+    prompt = st.text_area(
+        "이 라운드에 추가할 의견",
+        key=f"{key_prefix}_followup_text",
+        height=96,
+        placeholder="예: 나는 비용보다 발표 임팩트가 더 중요하다고 봐.",
+    )
+    submitted = st.button(
+        "이 의견으로 이어 말하기",
+        key=f"{key_prefix}_followup_submit",
+        type="primary",
+        use_container_width=True,
+    )
+    if not submitted:
         return
 
     content = prompt.strip()
@@ -961,6 +1104,8 @@ def selected_network_agent_id(personas, view_key: str) -> str | None:
     selected_agent_id = st.session_state.get(agent_selection_key(view_key))
     if any(persona.id == selected_agent_id for persona in personas):
         return selected_agent_id
+    if personas:
+        return personas[0].id
     return None
 
 
@@ -972,59 +1117,68 @@ def render_agent_network(personas, selected_agent_id: str | None, view_key: str)
     if not personas:
         return None
 
-    st.markdown(f"#### 참여 Agent {len(personas)}명")
-    st.caption("각 Agent 카드 아래의 정보 보기 버튼을 누르면 바로 아래에 역할, 관점, 캐릭터 정보가 표시됩니다.")
-    column_widths = []
-    for index in range(len(personas)):
-        column_widths.append(1.0)
-        if index < len(personas) - 1:
-            column_widths.append(0.14)
+    st.markdown(f"#### Agent roster · {len(personas)}명")
+    for row_start in range(0, len(personas), 2):
+        columns = st.columns(2, gap="small")
+        for offset, column in enumerate(columns):
+            persona_index = row_start + offset
+            if persona_index >= len(personas):
+                continue
+            persona = personas[persona_index]
+            with column:
+                selected_agent_id = render_agent_roster_card(
+                    persona=persona,
+                    index=persona_index,
+                    selected_agent_id=selected_agent_id,
+                    view_key=view_key,
+                )
 
+    return selected_agent_id
+
+
+def render_agent_roster_card(persona, index: int, selected_agent_id: str | None, view_key: str) -> str | None:
+    character = (
+        CHARACTERS_BY_ID.get(persona.character.id, persona.character)
+        if persona.character
+        else None
+    )
+    image_path = CHARACTER_IMAGE_PATHS.get(character.id) if character else None
+    role = character.archetype if character else persona.role
+    is_selected = persona.id == selected_agent_id
+    summary = trim_summary(persona.perspective or persona.role, 118)
+
+    if image_path and os.path.exists(image_path):
+        visual = f'<img class="pg-card-image" src="{image_data_uri(image_path)}" alt="{html.escape(persona.name)}">'
+    else:
+        visual = f'<div class="pg-card-image" style="display:flex;align-items:center;justify-content:center;font-weight:800;color:#1d4ed8;">{html.escape(persona.name[:2])}</div>'
+
+    selected_markup = '<div class="pg-roster-selected">현재 포커스</div>' if is_selected else ""
+    card_markup = (
+        '<div class="pg-roster-card">'
+        '<div style="display:flex; gap:0.78rem; align-items:flex-start;">'
+        f'<div>{visual}</div>'
+        '<div style="min-width:0;">'
+        f'<div class="pg-round-meta">Agent {index + 1}</div>'
+        f'<div class="pg-roster-name">{html.escape(persona.name)}</div>'
+        f'<div class="pg-roster-role">{html.escape(role)}</div>'
+        f'<div class="pg-roster-summary">{html.escape(summary)}</div>'
+        f'{selected_markup}'
+        '</div>'
+        '</div>'
+        '</div>'
+    )
     with st.container(border=True):
-        columns = st.columns(column_widths, gap="small")
-
-        for index, persona in enumerate(personas):
-            character = (
-                CHARACTERS_BY_ID.get(persona.character.id, persona.character)
-                if persona.character
-                else None
-            )
-            image_path = CHARACTER_IMAGE_PATHS.get(character.id) if character else None
-            role = character.archetype if character else persona.role
-            is_selected = persona.id == selected_agent_id
-
-            with columns[index * 2]:
-                with st.container(border=True):
-                    st.caption(f"Agent {index + 1}")
-                    image_col, text_col = st.columns([0.38, 0.62], gap="small")
-                    with image_col:
-                        if image_path and os.path.exists(image_path):
-                            render_local_image(image_path, persona.name, "pg-card-image")
-                        else:
-                            st.markdown(f"**{persona.name[:2]}**")
-                    with text_col:
-                        st.markdown(f"**{persona.name}**")
-                        st.caption(f"역할: {role}")
-                    if is_selected:
-                        st.success("현재 선택한 Agent")
-                    button_label = (
-                        f"Agent {index + 1} 선택됨"
-                        if is_selected
-                        else f"Agent {index + 1} 정보 보기"
-                    )
-                    if st.button(
-                        button_label,
-                        key=f"{view_key}_agent_select_{persona.id}",
-                        use_container_width=True,
-                        help=f"{persona.name}의 역할, 관점, 캐릭터 정보를 확인합니다.",
-                    ):
-                        st.session_state[agent_selection_key(view_key)] = persona.id
-                        st.rerun()
-
-            if index < len(personas) - 1:
-                with columns[index * 2 + 1]:
-                    st.markdown('<div class="pg-native-connector"></div>', unsafe_allow_html=True)
-
+        st.markdown(card_markup, unsafe_allow_html=True)
+        button_label = "선택됨" if is_selected else "정보 보기"
+        if st.button(
+            button_label,
+            key=f"{view_key}_agent_select_{persona.id}",
+            use_container_width=True,
+            help=f"{persona.name}의 역할, 관점, 캐릭터 정보를 확인합니다.",
+        ):
+            st.session_state[agent_selection_key(view_key)] = persona.id
+            st.rerun()
+            return persona.id
     return selected_agent_id
 
 
@@ -1115,7 +1269,7 @@ with tab_new:
         st.header("실행 설정")
         st.subheader("대화 구성")
         persona_count = st.slider("페르소나 수", min_value=3, max_value=5, value=5)
-        debate_rounds = st.slider("상호 응답 라운드", min_value=1, max_value=3, value=1)
+        debate_rounds = st.slider("Agent 이어 말하기 라운드", min_value=1, max_value=3, value=1)
         max_reply_agents = st.slider("응답 에이전트 수", min_value=1, max_value=3, value=2)
 
         with st.expander("고급 모델 설정", expanded=False):
