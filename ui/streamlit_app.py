@@ -16,7 +16,7 @@ if ROOT_DIR not in sys.path:
 import streamlit as st
 
 from app.characters import CHARACTER_POOL
-from app.schemas import Evaluation, SolveResponse
+from app.schemas import SolveResponse
 from app.storage import list_runs, load_run, save_run
 from app.workflow import continue_discussion_stream, solve_problem_stream
 
@@ -71,16 +71,6 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="collapsed",
 )
-
-
-def average_score(evaluation: Evaluation) -> float:
-    total = (
-        evaluation.consistency
-        + evaluation.specificity
-        + evaluation.risk_awareness
-        + evaluation.feasibility
-    )
-    return round(total / 4, 2)
 
 
 @st.cache_data(show_spinner=False)
@@ -238,32 +228,6 @@ def render_app_header() -> None:
     color: #4b5563;
     margin: 0.35rem 0 0 0;
     line-height: 1.5;
-}}
-.pg-decision-bar {{
-    border: 1px solid rgba(47, 128, 237, 0.20);
-    border-radius: 8px;
-    background: linear-gradient(90deg, #f8fbff 0%, #fffaf7 100%);
-    padding: 0.85rem 0.95rem;
-    margin: 0.55rem 0 1rem 0;
-}}
-.pg-decision-title {{
-    color: #2563eb;
-    font-size: 0.78rem;
-    font-weight: 700;
-    letter-spacing: 0;
-    margin-bottom: 0.2rem;
-}}
-.pg-decision-text {{
-    color: #111827;
-    font-size: 1rem;
-    font-weight: 700;
-    line-height: 1.45;
-    margin-bottom: 0.3rem;
-}}
-.pg-decision-meta {{
-    color: #4b5563;
-    font-size: 0.82rem;
-    line-height: 1.35;
 }}
 .pg-round-brief {{
     border: 1px solid rgba(31, 41, 55, 0.10);
@@ -483,24 +447,6 @@ def render_app_header() -> None:
 .pg-live-status strong {{
     color: #1d4ed8;
 }}
-.pg-eval-compact {{
-    margin-top: 0.55rem;
-    padding: 0.3rem 0 0.25rem 0;
-}}
-.pg-eval-line {{
-    color: #374151;
-    font-size: 0.86rem;
-    line-height: 1.45;
-}}
-.pg-eval-line strong {{
-    color: #111827;
-}}
-.pg-eval-comment {{
-    color: #6b7280;
-    font-size: 0.82rem;
-    line-height: 1.45;
-    margin-top: 0.2rem;
-}}
 .pg-topic-card {{
     border: 1px solid rgba(31, 41, 55, 0.10);
     border-radius: 8px;
@@ -608,68 +554,6 @@ div[data-testid="stAppViewContainer"] .main .block-container {{
     )
 
 
-def render_evaluation(evaluation: Evaluation) -> None:
-    score = average_score(evaluation)
-    st.markdown(
-        f"""
-<div class="pg-eval-compact">
-  <div class="pg-eval-line">
-    <strong>평가 요약</strong> · 평균 {score}/5 · {html.escape(score_band_label(score))}
-  </div>
-  <div class="pg-eval-comment">{html.escape(evaluation.overall_comment)}</div>
-</div>
-""",
-        unsafe_allow_html=True,
-    )
-    with st.expander("평가 세부 보기", expanded=False):
-        st.markdown(f"- 일관성: {evaluation.consistency}/5")
-        st.markdown(f"- 구체성: {evaluation.specificity}/5")
-        st.markdown(f"- 리스크 반영: {evaluation.risk_awareness}/5")
-        st.markdown(f"- 실행 가능성: {evaluation.feasibility}/5")
-        if evaluation.improvement_suggestions:
-            st.markdown("보완 제안")
-            for suggestion in evaluation.improvement_suggestions:
-                st.markdown(f"- {suggestion}")
-
-
-def score_band_label(score: float) -> str:
-    if score >= 4.5:
-        return "매우 좋음"
-    if score >= 4.0:
-        return "좋음"
-    if score >= 3.0:
-        return "보완 필요"
-    return "재검토 필요"
-
-
-def render_final_answer(response: SolveResponse) -> None:
-    st.markdown('<div id="final-answer"></div>', unsafe_allow_html=True)
-    st.subheader("최종 결론")
-    with st.container(border=True):
-        st.markdown("**최종 선택 요약**")
-        st.success(summarize_message(response.final_answer, max_length=180))
-        st.caption("현재까지의 라운드와 사용자 개입을 Synthesizer Agent가 반영해 갱신한 결론입니다.")
-        with st.expander("최종 결론 전문 보기", expanded=False):
-            render_message_content(response.final_answer)
-
-
-def render_quick_decision_bar(response: SolveResponse) -> None:
-    score = average_score(response.evaluation)
-    decision = html.escape(summarize_message(response.final_answer, max_length=150))
-    st.markdown(
-        f"""
-<div class="pg-decision-bar">
-  <div class="pg-decision-title">현재 결론</div>
-  <div class="pg-decision-text">{decision}</div>
-  <div class="pg-decision-meta">
-    평가 {score}/5 · {score_band_label(score)} · <a href="#final-answer">최종 결론으로 이동</a>
-  </div>
-</div>
-""",
-        unsafe_allow_html=True,
-    )
-
-
 def render_response(
     response: SolveResponse,
     view_key: str,
@@ -687,12 +571,13 @@ def render_response(
         if response.run_id:
             st.markdown(f"- run_id: `{response.run_id}`")
         st.markdown(f"- 사용한 응답 방식: `{status}`")
-    selected_agent_id = selected_network_agent_id(response.personas, view_key)
-    selected_agent_id = render_agent_network(response.personas, selected_agent_id, view_key)
-    render_selected_agent_info(response.personas, selected_agent_id)
 
-    st.subheader("에이전트 대화창")
-    render_message_timeline(response, key_prefix=view_key)
+    render_conversation_room(response)
+
+    with st.expander("Agent 상세 정보", expanded=False):
+        selected_agent_id = selected_network_agent_id(response.personas, view_key)
+        selected_agent_id = render_agent_network(response.personas, selected_agent_id, view_key)
+        render_selected_agent_info(response.personas, selected_agent_id)
 
     st.divider()
     if max_reply_agents is not None:
@@ -705,11 +590,6 @@ def render_response(
             key_prefix=input_key_prefix or view_key,
         )
 
-    render_quick_decision_bar(response)
-    render_final_answer(response)
-    render_evaluation(response.evaluation)
-
-
 def render_topic_context(response: SolveResponse) -> None:
     st.markdown(
         f"""
@@ -720,6 +600,40 @@ def render_topic_context(response: SolveResponse) -> None:
 """,
         unsafe_allow_html=True,
     )
+
+
+def render_conversation_room(response: SolveResponse) -> None:
+    messages = conversation_room_messages(response.messages)
+    st.markdown(
+        f"""
+<div class="pg-live-head">
+  <div class="pg-live-title">대화창</div>
+  <div class="pg-live-meta">토론이 끝나도 이 대화창에 전체 흐름이 유지됩니다. 현재 {len(messages)}개 발화가 남아 있습니다.</div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+    render_live_persona_roster(response.personas)
+    st.markdown('<div class="pg-live-stream-label">발화 스트림</div>', unsafe_allow_html=True)
+
+    if not messages:
+        st.markdown(
+            '<div class="pg-live-stream-empty">아직 표시할 대화가 없습니다.</div>',
+            unsafe_allow_html=True,
+        )
+        return
+
+    personas_by_id = {persona.id: persona for persona in response.personas}
+    for message in messages:
+        render_live_chat_message(message, personas_by_id)
+
+
+def conversation_room_messages(messages) -> list:
+    return [
+        message
+        for message in messages
+        if message.stage != "persona_generation"
+    ]
 
 
 def render_message_timeline(response: SolveResponse, key_prefix: str) -> None:
