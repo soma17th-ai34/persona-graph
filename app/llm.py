@@ -26,6 +26,7 @@ class LLMClient:
         self.temperature = temperature
         self.api_key = os.getenv("OPENAI_API_KEY")
         self.base_url = os.getenv("OPENAI_BASE_URL")
+        self.timeout = float(os.getenv("PERSONA_GRAPH_TIMEOUT", "20"))
         self.enabled = enabled and bool(self.api_key)
         self._client = None
         self._init_error: str | None = None
@@ -37,6 +38,7 @@ class LLMClient:
                 kwargs: dict[str, Any] = {"api_key": self.api_key}
                 if self.base_url:
                     kwargs["base_url"] = self.base_url
+                kwargs["timeout"] = self.timeout
                 self._client = OpenAI(**kwargs)
             except Exception as exc:  # pragma: no cover - depends on local package setup
                 self.enabled = False

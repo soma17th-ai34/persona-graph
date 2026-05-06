@@ -5,6 +5,7 @@ import html
 import os
 import re
 import sys
+import time
 
 from dotenv import load_dotenv
 
@@ -15,9 +16,9 @@ if ROOT_DIR not in sys.path:
 import streamlit as st
 
 from app.characters import CHARACTER_POOL
-from app.schemas import Evaluation, SolveResponse
+from app.schemas import SolveResponse
 from app.storage import list_runs, load_run, save_run
-from app.workflow import continue_discussion, solve_problem
+from app.workflow import continue_discussion_stream, solve_problem_stream
 
 
 load_dotenv(os.path.join(ROOT_DIR, ".env"))
@@ -70,16 +71,6 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="collapsed",
 )
-
-
-def average_score(evaluation: Evaluation) -> float:
-    total = (
-        evaluation.consistency
-        + evaluation.specificity
-        + evaluation.risk_awareness
-        + evaluation.feasibility
-    )
-    return round(total / 4, 2)
 
 
 @st.cache_data(show_spinner=False)
@@ -238,32 +229,6 @@ def render_app_header() -> None:
     margin: 0.35rem 0 0 0;
     line-height: 1.5;
 }}
-.pg-decision-bar {{
-    border: 1px solid rgba(47, 128, 237, 0.20);
-    border-radius: 8px;
-    background: linear-gradient(90deg, #f8fbff 0%, #fffaf7 100%);
-    padding: 0.85rem 0.95rem;
-    margin: 0.55rem 0 1rem 0;
-}}
-.pg-decision-title {{
-    color: #2563eb;
-    font-size: 0.78rem;
-    font-weight: 700;
-    letter-spacing: 0;
-    margin-bottom: 0.2rem;
-}}
-.pg-decision-text {{
-    color: #111827;
-    font-size: 1rem;
-    font-weight: 700;
-    line-height: 1.45;
-    margin-bottom: 0.3rem;
-}}
-.pg-decision-meta {{
-    color: #4b5563;
-    font-size: 0.82rem;
-    line-height: 1.35;
-}}
 .pg-round-brief {{
     border: 1px solid rgba(31, 41, 55, 0.10);
     border-radius: 8px;
@@ -375,23 +340,130 @@ def render_app_header() -> None:
     line-height: 1.45;
     margin-top: 0.18rem;
 }}
-.pg-eval-compact {{
-    margin-top: 0.55rem;
-    padding: 0.3rem 0 0.25rem 0;
+.pg-live-head {{
+    border: 1px solid rgba(47, 128, 237, 0.18);
+    border-radius: 8px;
+    background: #fbfcff;
+    padding: 0.85rem 0.95rem;
+    margin: 0.7rem 0 0.8rem 0;
 }}
-.pg-eval-line {{
-    color: #374151;
-    font-size: 0.86rem;
+.pg-live-title {{
+    color: #111827;
+    font-size: 1rem;
+    font-weight: 800;
+    line-height: 1.35;
+}}
+.pg-live-meta {{
+    color: #4b5563;
+    font-size: 0.84rem;
+    line-height: 1.45;
+    margin-top: 0.18rem;
+}}
+.pg-typing-text {{
+    color: #2563eb;
+    font-size: 0.92rem;
+    font-weight: 800;
     line-height: 1.45;
 }}
-.pg-eval-line strong {{
-    color: #111827;
-}}
-.pg-eval-comment {{
+.pg-typing-dots {{
     color: #6b7280;
     font-size: 0.82rem;
     line-height: 1.45;
+    margin-top: 0.18rem;
+}}
+.pg-live-roster-label {{
+    color: #111827;
+    font-size: 0.92rem;
+    font-weight: 800;
+    line-height: 1.35;
+    margin: 0.15rem 0 0.45rem 0;
+}}
+.pg-live-roster {{
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+    gap: 0.55rem;
+    margin: 0 0 0.85rem 0;
+}}
+.pg-live-persona {{
+    display: flex;
+    gap: 0.55rem;
+    align-items: flex-start;
+    border: 1px solid rgba(31, 41, 55, 0.08);
+    border-radius: 8px;
+    background: #ffffff;
+    padding: 0.55rem;
+}}
+.pg-live-persona img {{
+    width: 2.4rem;
+    height: 3.25rem;
+    border-radius: 8px;
+    object-fit: contain;
+    background: #f8f5ef;
+    flex: 0 0 auto;
+}}
+.pg-live-persona-name {{
+    color: #111827;
+    font-size: 0.86rem;
+    font-weight: 800;
+    line-height: 1.25;
+    word-break: keep-all;
+    overflow-wrap: anywhere;
+}}
+.pg-live-persona-role {{
+    color: #2563eb;
+    font-size: 0.75rem;
+    font-weight: 700;
+    line-height: 1.35;
+    margin-top: 0.08rem;
+}}
+.pg-live-persona-summary {{
+    color: #4b5563;
+    font-size: 0.75rem;
+    line-height: 1.35;
     margin-top: 0.2rem;
+}}
+.pg-live-stream-label {{
+    color: #111827;
+    font-size: 0.92rem;
+    font-weight: 800;
+    line-height: 1.35;
+    margin: 0.5rem 0 0.45rem 0;
+    padding-top: 0.65rem;
+    border-top: 1px solid rgba(31, 41, 55, 0.08);
+}}
+.pg-live-stream-empty {{
+    color: #6b7280;
+    font-size: 0.84rem;
+    line-height: 1.45;
+    margin: 0.25rem 0 0.65rem 0;
+}}
+.pg-live-status {{
+    border: 1px dashed rgba(47, 128, 237, 0.28);
+    border-radius: 8px;
+    background: #f8fbff;
+    padding: 0.75rem 0.85rem;
+    margin: 0.45rem 0 0.85rem 0;
+}}
+.pg-live-status strong {{
+    color: #1d4ed8;
+}}
+.pg-topic-card {{
+    border: 1px solid rgba(31, 41, 55, 0.10);
+    border-radius: 8px;
+    background: #fbfcfd;
+    padding: 0.8rem 0.95rem;
+    margin: 0.4rem 0 0.9rem 0;
+}}
+.pg-topic-label {{
+    color: #2563eb;
+    font-size: 0.78rem;
+    font-weight: 800;
+    margin-bottom: 0.18rem;
+}}
+.pg-topic-text {{
+    color: #111827;
+    font-size: 0.95rem;
+    line-height: 1.45;
 }}
 div[data-testid="stAppViewContainer"] .main .block-container {{
     padding-bottom: 4rem;
@@ -482,68 +554,6 @@ div[data-testid="stAppViewContainer"] .main .block-container {{
     )
 
 
-def render_evaluation(evaluation: Evaluation) -> None:
-    score = average_score(evaluation)
-    st.markdown(
-        f"""
-<div class="pg-eval-compact">
-  <div class="pg-eval-line">
-    <strong>평가 요약</strong> · 평균 {score}/5 · {html.escape(score_band_label(score))}
-  </div>
-  <div class="pg-eval-comment">{html.escape(evaluation.overall_comment)}</div>
-</div>
-""",
-        unsafe_allow_html=True,
-    )
-    with st.expander("평가 세부 보기", expanded=False):
-        st.markdown(f"- 일관성: {evaluation.consistency}/5")
-        st.markdown(f"- 구체성: {evaluation.specificity}/5")
-        st.markdown(f"- 리스크 반영: {evaluation.risk_awareness}/5")
-        st.markdown(f"- 실행 가능성: {evaluation.feasibility}/5")
-        if evaluation.improvement_suggestions:
-            st.markdown("보완 제안")
-            for suggestion in evaluation.improvement_suggestions:
-                st.markdown(f"- {suggestion}")
-
-
-def score_band_label(score: float) -> str:
-    if score >= 4.5:
-        return "매우 좋음"
-    if score >= 4.0:
-        return "좋음"
-    if score >= 3.0:
-        return "보완 필요"
-    return "재검토 필요"
-
-
-def render_final_answer(response: SolveResponse) -> None:
-    st.markdown('<div id="final-answer"></div>', unsafe_allow_html=True)
-    st.subheader("최종 결론")
-    with st.container(border=True):
-        st.markdown("**최종 선택 요약**")
-        st.success(summarize_message(response.final_answer, max_length=180))
-        st.caption("현재까지의 라운드와 사용자 개입을 Synthesizer Agent가 반영해 갱신한 결론입니다.")
-        with st.expander("최종 결론 전문 보기", expanded=False):
-            render_message_content(response.final_answer)
-
-
-def render_quick_decision_bar(response: SolveResponse) -> None:
-    score = average_score(response.evaluation)
-    decision = html.escape(summarize_message(response.final_answer, max_length=150))
-    st.markdown(
-        f"""
-<div class="pg-decision-bar">
-  <div class="pg-decision-title">현재 결론</div>
-  <div class="pg-decision-text">{decision}</div>
-  <div class="pg-decision-meta">
-    평가 {score}/5 · {score_band_label(score)} · <a href="#final-answer">최종 결론으로 이동</a>
-  </div>
-</div>
-""",
-        unsafe_allow_html=True,
-    )
-
-
 def render_response(
     response: SolveResponse,
     view_key: str,
@@ -553,6 +563,7 @@ def render_response(
     temperature: float = 0.35,
     input_key_prefix: str | None = None,
 ) -> None:
+    render_topic_context(response)
     status = "LLM API 사용" if response.used_llm else "로컬 폴백 사용"
     st.caption(f"상태: 토론 완료 · 응답 방식: {status}")
     with st.expander("실행 정보 보기", expanded=False):
@@ -560,12 +571,13 @@ def render_response(
         if response.run_id:
             st.markdown(f"- run_id: `{response.run_id}`")
         st.markdown(f"- 사용한 응답 방식: `{status}`")
-    selected_agent_id = selected_network_agent_id(response.personas, view_key)
-    selected_agent_id = render_agent_network(response.personas, selected_agent_id, view_key)
-    render_selected_agent_info(response.personas, selected_agent_id)
 
-    st.subheader("에이전트 대화창")
-    render_message_timeline(response, key_prefix=view_key)
+    render_conversation_room(response)
+
+    with st.expander("Agent 상세 정보", expanded=False):
+        selected_agent_id = selected_network_agent_id(response.personas, view_key)
+        selected_agent_id = render_agent_network(response.personas, selected_agent_id, view_key)
+        render_selected_agent_info(response.personas, selected_agent_id)
 
     st.divider()
     if max_reply_agents is not None:
@@ -578,9 +590,50 @@ def render_response(
             key_prefix=input_key_prefix or view_key,
         )
 
-    render_quick_decision_bar(response)
-    render_final_answer(response)
-    render_evaluation(response.evaluation)
+def render_topic_context(response: SolveResponse) -> None:
+    st.markdown(
+        f"""
+<div class="pg-topic-card">
+  <div class="pg-topic-label">토론 주제</div>
+  <div class="pg-topic-text">{html.escape(trim_summary(response.problem, 220))}</div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+
+def render_conversation_room(response: SolveResponse) -> None:
+    messages = conversation_room_messages(response.messages)
+    st.markdown(
+        f"""
+<div class="pg-live-head">
+  <div class="pg-live-title">대화창</div>
+  <div class="pg-live-meta">토론이 끝나도 이 대화창에 전체 흐름이 유지됩니다. 현재 {len(messages)}개 발화가 남아 있습니다.</div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+    render_live_persona_roster(response.personas)
+    st.markdown('<div class="pg-live-stream-label">발화 스트림</div>', unsafe_allow_html=True)
+
+    if not messages:
+        st.markdown(
+            '<div class="pg-live-stream-empty">아직 표시할 대화가 없습니다.</div>',
+            unsafe_allow_html=True,
+        )
+        return
+
+    personas_by_id = {persona.id: persona for persona in response.personas}
+    for message in messages:
+        render_live_chat_message(message, personas_by_id)
+
+
+def conversation_room_messages(messages) -> list:
+    return [
+        message
+        for message in messages
+        if message.stage != "persona_generation"
+    ]
 
 
 def render_message_timeline(response: SolveResponse, key_prefix: str) -> None:
@@ -983,6 +1036,283 @@ def render_message_content(content: str) -> None:
     st.markdown(safe_content, unsafe_allow_html=True)
 
 
+def consume_live_stream(events, initial_personas=None) -> SolveResponse | None:
+    live_messages = []
+    live_personas = list(initial_personas or [])
+    active_event = None
+    final_response = None
+    placeholder = st.empty()
+
+    render_live_stream_panel(placeholder, live_messages, live_personas, active_event)
+    for event in events:
+        event_type = event.get("type")
+        if event_type == "personas_ready":
+            live_personas = list(event.get("personas", []))
+            active_event = None
+        elif event_type == "agent_started":
+            active_event = event
+        elif event_type == "agent_message":
+            message = event.get("message")
+            if message is not None:
+                if message.stage != "persona_generation":
+                    for frame in live_message_frames(message.content):
+                        preview_message_model = message.model_copy(
+                            update={"content": frame}
+                        )
+                        render_live_stream_panel(
+                            placeholder,
+                            live_messages,
+                            live_personas,
+                            None,
+                            streaming_message=preview_message_model,
+                        )
+                        time.sleep(0.025)
+                    live_messages.append(message)
+            active_event = None
+        elif event_type == "final_response":
+            final_response = event.get("response")
+            active_event = None
+
+        render_live_stream_panel(placeholder, live_messages, live_personas, active_event)
+
+    placeholder.empty()
+    return final_response
+
+
+def render_live_stream_panel(
+    placeholder,
+    messages,
+    personas,
+    active_event,
+    streaming_message=None,
+) -> None:
+    placeholder.empty()
+    with placeholder.container():
+        visible_count = len(messages) + (1 if streaming_message is not None else 0)
+        meta = live_panel_meta(personas, visible_count, active_event, streaming_message)
+        st.markdown(
+            f"""
+<div class="pg-live-head">
+  <div class="pg-live-title">라이브 토론</div>
+  <div class="pg-live-meta">{html.escape(meta)}</div>
+</div>
+""",
+            unsafe_allow_html=True,
+        )
+        personas_by_id = {persona.id: persona for persona in personas}
+        if personas:
+            render_live_persona_roster(personas)
+        elif active_event is not None and active_event.get("stage") == "persona_generation":
+            render_live_setup_status("페르소나를 구성하고 있습니다.")
+
+        st.markdown('<div class="pg-live-stream-label">발화 스트림</div>', unsafe_allow_html=True)
+        if not messages and streaming_message is None and active_event is None:
+            st.markdown(
+                '<div class="pg-live-stream-empty">페르소나 준비가 끝나면 첫 발화가 이어집니다.</div>',
+                unsafe_allow_html=True,
+            )
+        for message in messages:
+            render_live_chat_message(message, personas_by_id)
+        if streaming_message is not None:
+            render_live_chat_message(streaming_message, personas_by_id, is_streaming=True)
+        if active_event is not None:
+            if active_event.get("stage") == "persona_generation":
+                return
+            render_typing_indicator(active_event, personas_by_id)
+
+
+def live_panel_meta(personas, visible_count: int, active_event, streaming_message) -> str:
+    if not personas:
+        return "먼저 토론에 참여할 페르소나를 만들고 있습니다."
+    if streaming_message is not None:
+        return f"{streaming_message.agent_name}의 발화가 실시간으로 올라오는 중입니다."
+    if active_event is not None:
+        return f"{active_event.get('agent_name', 'Agent')}가 다음 발화를 준비하고 있습니다."
+    if visible_count == 0:
+        return "페르소나 준비 완료. 곧 첫 발화가 시작됩니다."
+    return f"페르소나 {len(personas)}명 · 현재 {visible_count}개 발화가 이어졌습니다."
+
+
+def render_live_setup_status(label: str) -> None:
+    st.markdown(
+        f"""
+<div class="pg-live-status">
+  <strong>{html.escape(label)}</strong>
+  <div class="pg-typing-dots">토론방에 들어올 Agent들의 역할과 관점을 정리하는 중입니다.</div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+
+def render_live_persona_roster(personas) -> None:
+    cards = []
+    for persona in personas:
+        character = (
+            CHARACTERS_BY_ID.get(persona.character.id, persona.character)
+            if persona.character
+            else None
+        )
+        image_markup = live_persona_image_markup(persona, character)
+        role = character.archetype if character else persona.role
+        summary = trim_summary(persona.perspective or persona.role, 78)
+        cards.append(
+            f"""
+<div class="pg-live-persona">
+  {image_markup}
+  <div>
+    <div class="pg-live-persona-name">{html.escape(persona.name)}</div>
+    <div class="pg-live-persona-role">{html.escape(role)}</div>
+    <div class="pg-live-persona-summary">{html.escape(summary)}</div>
+  </div>
+</div>
+"""
+        )
+
+    st.markdown(
+        f"""
+<div class="pg-live-roster-label">오늘의 페르소나</div>
+<div class="pg-live-roster">{''.join(cards)}</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+
+def live_persona_image_markup(persona, character) -> str:
+    if character:
+        image_path = CHARACTER_IMAGE_PATHS.get(character.id)
+        if image_path and os.path.exists(image_path):
+            return (
+                f'<img src="{image_data_uri(image_path)}" '
+                f'alt="{html.escape(persona.name)}">'
+            )
+    initials = html.escape(persona.name[:2])
+    return (
+        '<div class="pg-card-image" '
+        'style="width:2.4rem;height:3.25rem;display:flex;align-items:center;'
+        'justify-content:center;font-size:0.82rem;font-weight:800;color:#1d4ed8;">'
+        f"{initials}</div>"
+    )
+
+
+def render_live_chat_message(message, personas_by_id, is_streaming: bool = False) -> None:
+    persona = personas_by_id.get(message.agent_id)
+    character = (
+        CHARACTERS_BY_ID.get(persona.character.id, persona.character)
+        if persona and persona.character
+        else None
+    )
+    avatar = message_avatar(message, character)
+    meta_label = message_meta_label(message, chat_stage_label(message))
+
+    with st.container(border=True):
+        avatar_col, content_col = st.columns([0.12, 0.88], gap="small")
+        with avatar_col:
+            if avatar:
+                render_local_image(avatar, message.agent_name, "pg-chat-avatar")
+            else:
+                st.markdown(f"**{message_avatar_text(message)}**")
+        with content_col:
+            st.markdown(
+                f"""
+<div class="pg-speaker-line">
+  <span class="{message_chip_class(message)}">{html.escape(message.agent_name)}</span>
+  <span class="pg-round-meta">{html.escape(meta_label)}</span>
+</div>
+""",
+                unsafe_allow_html=True,
+            )
+            content = f"{message.content} |" if is_streaming else message.content
+            render_message_content(content)
+
+
+def live_message_frames(content: str) -> list[str]:
+    content = content.strip()
+    if not content:
+        return [""]
+
+    if len(content) <= 70:
+        return [content]
+
+    frame_count = min(8, max(2, len(content) // 140))
+    step = max(70, len(content) // frame_count)
+    frames: list[str] = []
+    cursor = step
+    while cursor < len(content):
+        boundary = max(
+            content.rfind("\n", 0, cursor),
+            content.rfind(". ", 0, cursor),
+            content.rfind("다.", 0, cursor),
+            content.rfind("요.", 0, cursor),
+            content.rfind(" ", 0, cursor),
+        )
+        previous_length = len(frames[-1]) if frames else 0
+        if boundary > previous_length + 35:
+            cursor = sentence_boundary_end(content, boundary)
+        frame = content[:cursor].rstrip()
+        if not frames or frame != frames[-1]:
+            frames.append(frame)
+        cursor += step
+
+    if not frames or frames[-1] != content:
+        frames.append(content)
+    return frames
+
+
+def sentence_boundary_end(content: str, boundary: int) -> int:
+    for marker in ("다.", "요.", ". "):
+        if content.startswith(marker, boundary):
+            return boundary + len(marker)
+    return boundary + 1
+
+
+def render_typing_indicator(event, personas_by_id) -> None:
+    agent_id = str(event.get("agent_id", ""))
+    agent_name = str(event.get("agent_name", "Agent"))
+    stage = str(event.get("stage", "unknown"))
+    persona = personas_by_id.get(agent_id)
+    character = (
+        CHARACTERS_BY_ID.get(persona.character.id, persona.character)
+        if persona and persona.character
+        else None
+    )
+    avatar = None
+    if character:
+        image_path = CHARACTER_IMAGE_PATHS.get(character.id)
+        if image_path and os.path.exists(image_path):
+            avatar = image_path
+
+    with st.container(border=True):
+        avatar_col, content_col = st.columns([0.12, 0.88], gap="small")
+        with avatar_col:
+            if avatar:
+                render_local_image(avatar, agent_name, "pg-chat-avatar")
+            else:
+                st.markdown(f"**{agent_avatar_text(agent_id, agent_name, stage)}**")
+        with content_col:
+            st.markdown(
+                f"""
+<div class="pg-speaker-line">
+  <span class="pg-speaker-chip">{html.escape(agent_name)}</span>
+  <span class="pg-round-meta">{html.escape(STAGE_LABELS.get(stage, stage))}</span>
+</div>
+<div class="pg-typing-text">입력 중...</div>
+<div class="pg-typing-dots">생각을 정리하고 있습니다.</div>
+""",
+                unsafe_allow_html=True,
+            )
+
+
+def agent_avatar_text(agent_id: str, agent_name: str, stage: str) -> str:
+    return {
+        "persona_generator": "PG",
+        "moderator": "MOD",
+        "critic": "CR",
+        "synthesizer": "FIN",
+        "evaluator": "EV",
+    }.get(agent_id, agent_name[:2].upper() if agent_name else stage[:2].upper())
+
+
 def render_discussion_input(
     response: SolveResponse,
     max_agents: int,
@@ -1003,18 +1333,18 @@ def render_discussion_input(
 """,
         unsafe_allow_html=True,
     )
-    prompt = st.text_area(
-        "이 라운드에 추가할 의견",
-        key=f"{key_prefix}_followup_text",
-        height=96,
-        placeholder="예: 나는 비용보다 발표 임팩트가 더 중요하다고 봐.",
-    )
-    submitted = st.button(
-        "이 의견으로 이어 말하기",
-        key=f"{key_prefix}_followup_submit",
-        type="primary",
-        use_container_width=True,
-    )
+    with st.form(key=f"{key_prefix}_followup_form"):
+        prompt = st.text_area(
+            "이 라운드에 추가할 의견",
+            key=f"{key_prefix}_followup_text",
+            height=96,
+            placeholder="예: 나는 비용보다 발표 임팩트가 더 중요하다고 봐.",
+        )
+        submitted = st.form_submit_button(
+            "이 의견으로 이어 말하기",
+            type="primary",
+            use_container_width=True,
+        )
     if not submitted:
         return
 
@@ -1023,16 +1353,22 @@ def render_discussion_input(
         st.warning("의견을 한 글자 이상 입력해주세요.")
         return
 
-    with st.spinner("Agent들이 현재 의견에 이어서 답변하는 중입니다..."):
-        updated = continue_discussion(
+    updated = consume_live_stream(
+        continue_discussion_stream(
             response=response,
             user_content=content,
             max_agents=max_agents,
             use_llm=use_llm,
             model=model,
             temperature=temperature,
-        )
-        updated = save_run(updated)
+        ),
+        initial_personas=response.personas,
+    )
+    if updated is None:
+        st.error("이어 말하기 결과를 만들지 못했습니다.")
+        return
+
+    updated = save_run(updated)
 
     st.session_state["last_response"] = updated
     st.rerun()
@@ -1057,6 +1393,8 @@ def render_start_cta() -> None:
                 use_container_width=True,
             ):
                 st.session_state["problem_text"] = sample_problem
+                st.session_state.pop("last_response", None)
+                st.rerun()
 
 
 def render_character(character) -> None:
@@ -1262,82 +1600,117 @@ def render_character_detail(character) -> None:
 
 render_app_header()
 
-tab_new, tab_saved = st.tabs(["새 토론 실행", "저장된 토론 보기"])
+with st.sidebar:
+    st.header("실행 설정")
+    st.subheader("대화 구성")
+    persona_count = st.slider("페르소나 수", min_value=3, max_value=5, value=3)
+    debate_rounds = st.slider("Agent 이어 말하기 라운드", min_value=1, max_value=3, value=1)
+    max_reply_agents = st.slider("응답 에이전트 수", min_value=1, max_value=3, value=2)
 
-with tab_new:
-    with st.sidebar:
-        st.header("실행 설정")
-        st.subheader("대화 구성")
-        persona_count = st.slider("페르소나 수", min_value=3, max_value=5, value=5)
-        debate_rounds = st.slider("Agent 이어 말하기 라운드", min_value=1, max_value=3, value=1)
-        max_reply_agents = st.slider("응답 에이전트 수", min_value=1, max_value=3, value=2)
+    with st.expander("고급 모델 설정", expanded=False):
+        use_llm = st.toggle("LLM API 사용", value=True)
+        model = st.text_input("모델명", value=os.getenv("PERSONA_GRAPH_MODEL", "gpt-5.4-mini"))
+        temperature = st.slider("응답 다양성", min_value=0.0, max_value=1.2, value=0.35, step=0.05)
+        api_status = "설정됨" if os.getenv("OPENAI_API_KEY") else "미설정"
+        st.caption(f"OPENAI_API_KEY: {api_status}")
 
-        with st.expander("고급 모델 설정", expanded=False):
-            use_llm = st.toggle("LLM API 사용", value=True)
-            model = st.text_input("모델명", value=os.getenv("PERSONA_GRAPH_MODEL", "gpt-5.4-mini"))
-            temperature = st.slider("응답 다양성", min_value=0.0, max_value=1.2, value=0.35, step=0.05)
-            api_status = "설정됨" if os.getenv("OPENAI_API_KEY") else "미설정"
-            st.caption(f"OPENAI_API_KEY: {api_status}")
+    st.divider()
+    selected_sample = st.selectbox("샘플 시나리오", list(SAMPLE_PROBLEMS.keys()))
+    load_sample = st.button("샘플을 입력창에 넣기")
 
-        st.divider()
-        selected_sample = st.selectbox("샘플 시나리오", list(SAMPLE_PROBLEMS.keys()))
-        load_sample = st.button("샘플을 입력창에 넣기")
+if load_sample:
+    st.session_state["problem_text"] = SAMPLE_PROBLEMS[selected_sample]
+    st.session_state.pop("last_response", None)
+    st.session_state["main_view"] = "새 토론 실행"
 
-    if load_sample:
-        st.session_state["problem_text"] = SAMPLE_PROBLEMS[selected_sample]
+view = st.radio(
+    "화면 선택",
+    ["새 토론 실행", "저장된 토론 보기"],
+    horizontal=True,
+    label_visibility="collapsed",
+    key="main_view",
+)
 
-    if not st.session_state.get("last_response"):
-        render_start_cta()
+if view == "새 토론 실행":
+    start_slot = st.empty()
+    if not st.session_state.get("last_response") and not st.session_state.get("problem_text"):
+        with start_slot.container():
+            render_start_cta()
+    else:
+        start_slot.empty()
 
-    problem = st.text_area(
-        "해결할 문제",
-        key="problem_text",
-        height=160,
-        placeholder="예: 2주 안에 데모 가능한 다중 에이전트 AI 프로젝트를 만들고 싶다...",
-    )
+    with st.form(key="new_problem_form"):
+        problem = st.text_area(
+            "해결할 문제",
+            key="problem_text",
+            height=160,
+            placeholder="예: 2주 안에 데모 가능한 다중 에이전트 AI 프로젝트를 만들고 싶다...",
+        )
+        run = st.form_submit_button(
+            "에이전트 토론 시작",
+            type="primary",
+            use_container_width=True,
+        )
 
-    run = st.button("에이전트 토론 시작", type="primary", use_container_width=True)
+    result_slot = st.empty()
 
     if run:
         if len(problem.strip()) < 5:
             st.warning("문제를 조금 더 구체적으로 입력해주세요.")
             st.stop()
 
-        with st.spinner("PersonaGraph가 에이전트 토론을 진행 중입니다..."):
-            response = solve_problem(
-                problem=problem.strip(),
-                persona_count=persona_count,
-                debate_rounds=debate_rounds,
+        st.session_state.pop("last_response", None)
+        with result_slot.container():
+            response = consume_live_stream(
+                solve_problem_stream(
+                    problem=problem.strip(),
+                    persona_count=persona_count,
+                    debate_rounds=debate_rounds,
+                    use_llm=use_llm,
+                    model=model.strip() or None,
+                    temperature=temperature,
+                )
+            )
+        if response is None:
+            st.error("토론 결과를 만들지 못했습니다.")
+            st.stop()
+
+        response = save_run(response)
+
+        st.session_state["last_response"] = response
+        with result_slot.container():
+            render_response(
+                response,
+                view_key="new_response",
+                max_reply_agents=max_reply_agents,
                 use_llm=use_llm,
                 model=model.strip() or None,
                 temperature=temperature,
+                input_key_prefix="new",
             )
-            response = save_run(response)
-
-        st.session_state["last_response"] = response
-        render_response(
-            response,
-            view_key="new_response",
-            max_reply_agents=max_reply_agents,
-            use_llm=use_llm,
-            model=model.strip() or None,
-            temperature=temperature,
-            input_key_prefix="new",
-        )
     elif st.session_state.get("last_response"):
-        render_response(
-            st.session_state["last_response"],
-            view_key="last_response",
-            max_reply_agents=max_reply_agents,
-            use_llm=use_llm,
-            model=model.strip() or None,
-            temperature=temperature,
-            input_key_prefix="new",
-        )
+        last_response = st.session_state["last_response"]
+        current_problem = problem.strip()
+        if current_problem and current_problem != last_response.problem:
+            result_slot.info("입력 내용이 이전 실행 결과와 다릅니다. 현재 입력으로 새 토론을 보려면 `에이전트 토론 시작`을 눌러주세요.")
+        else:
+            with result_slot.container():
+                render_response(
+                    last_response,
+                    view_key="last_response",
+                    max_reply_agents=max_reply_agents,
+                    use_llm=use_llm,
+                    model=model.strip() or None,
+                    temperature=temperature,
+                    input_key_prefix="new",
+                )
     else:
-        st.caption("샘플을 고르거나 직접 문제를 입력한 뒤 `에이전트 토론 시작`을 누르세요.")
+        if problem.strip():
+            result_slot.caption("입력 내용을 확인한 뒤 `에이전트 토론 시작`을 누르세요.")
+        else:
+            result_slot.caption("샘플을 고르거나 직접 문제를 입력한 뒤 `에이전트 토론 시작`을 누르세요.")
 
-with tab_saved:
+else:
     summaries = list_runs()
     if not summaries:
         st.info("아직 저장된 토론 로그가 없습니다.")
