@@ -11,10 +11,26 @@ class SynthesizerAgent:
         problem: str,
         debate_messages: list[AgentMessage],
         critique: AgentMessage,
+        improvement_suggestions: list[str] | None = None,
+        previous_synthesis: str | None = None,
     ) -> AgentMessage:
         transcript = "\n\n".join(
             f"[{message.agent_name} / {message.role}]\n{message.content}" for message in debate_messages
         )
+        refine_block = ""
+        if previous_synthesis or improvement_suggestions:
+            suggestion_text = (
+                "\n".join(f"- {item}" for item in (improvement_suggestions or []))
+                or "- 개선 제안 없음"
+            )
+            refine_block = f"""
+
+이전 종합안:
+{previous_synthesis or "없음"}
+
+평가 기반 개선 제안:
+{suggestion_text}
+"""
         prompt = f"""
 문제:
 {problem}
@@ -24,6 +40,7 @@ class SynthesizerAgent:
 
 비판:
 {critique.content}
+{refine_block}
 
 충돌을 정리하고 토론을 실행 가능한 계획으로 통합한 최종 답변을 작성하세요.
 반드시 자연스러운 한국어로 작성하고, 고유명사나 기술 약어 외에는 영어를 최소화하세요.
@@ -39,17 +56,36 @@ class SynthesizerAgent:
             user_prompt=prompt,
             temperature=0.3,
         )
-        content = result.content if result.used_llm and result.content else self._fallback(problem, critique)
+        content = (
+            result.content
+            if result.used_llm and result.content
+            else self._fallback(problem, critique, improvement_suggestions)
+        )
         return AgentMessage(
             stage="synthesizer",
             agent_id="synthesizer",
             agent_name="종합 에이전트",
             role="토론을 최종 답변으로 통합하는 역할",
             content=content,
-            metadata={"source": "llm" if result.used_llm and result.content else "fallback", "error": result.error},
+            metadata={
+                "source": "llm" if result.used_llm and result.content else "fallback",
+                "error": result.error,
+                "phase": "refine" if improvement_suggestions else "initial",
+            },
         )
 
-    def _fallback(self, problem: str, critique: AgentMessage) -> str:
+    def _fallback(
+        self,
+        problem: str,
+        critique: AgentMessage,
+        improvement_suggestions: list[str] | None = None,
+    ) -> str:
+        suggestion_line = ""
+        if improvement_suggestions:
+            suggestion_line = (
+                "\n\n보완 포인트 반영:\n"
+                + "\n".join(f"- {item}" for item in improvement_suggestions[:3])
+            )
         return f"""1. 최종 결론
 입력된 문제는 한 번에 거대한 자동화 시스템으로 만들기보다, 관점 생성 -> 역할별 의견 -> 비판 -> 종합이 안정적으로 보이는 MVP로 구현하는 것이 가장 좋습니다.
 
@@ -69,4 +105,4 @@ class SynthesizerAgent:
 {critique.content}
 
 5. 다음 24시간 액션
-샘플 문제 3개로 로그가 끝까지 생성되는지 확인하고, 발표용으로 가장 설득력 있는 시나리오 하나를 고릅니다."""
+샘플 문제 3개로 로그가 끝까지 생성되는지 확인하고, 발표용으로 가장 설득력 있는 시나리오 하나를 고릅니다.{suggestion_line}"""

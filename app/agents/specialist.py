@@ -1,3 +1,5 @@
+import re
+
 from app.llm import LLMClient
 from app.schemas import AgentMessage, Persona
 
@@ -7,28 +9,14 @@ class SpecialistAgent:
         self.llm = llm
 
     def answer(self, problem: str, persona: Persona) -> AgentMessage:
-        prompt = f"""
-문제:
-{problem}
-
-페르소나:
-- 이름: {persona.name}
-- 역할: {persona.role}
-- 관점: {persona.perspective}
-- 핵심 질문: {", ".join(persona.priority_questions)}
-
-이 페르소나의 관점에서 실용적인 의견을 작성하세요.
-반드시 자연스러운 한국어로 작성하고, 고유명사나 기술 약어 외에는 영어를 최소화하세요.
-단체 대화방의 첫 발언처럼 작성하세요.
-요구사항:
-- 첫 문장에 자기 판단을 바로 말하세요.
-- 번호 목록이나 "핵심 판단/근거/실행 제안" 같은 보고서 제목을 쓰지 마세요.
-- 자기 관점에서 중요한 이유와 바로 해볼 수 있는 제안을 자연스럽게 이어 말하세요.
-- 다른 Agent에게 넘기는 질문으로 끝낼 필요는 없습니다.
-- 3~5문장으로 짧고 구체적으로 작성하세요.
-"""
+        prompt = self._build_prompt(
+            problem=problem,
+            persona=persona,
+            mode="initial",
+            transcript="아직 발언이 없습니다.",
+        )
         result = self.llm.complete(
-            system_prompt="당신은 한국어 단체 대화방에 함께 있는 전문가 Agent입니다. 보고서가 아니라 채팅방 발언처럼 짧고 자연스럽게 말하세요.",
+            system_prompt="당신은 한국어 단체 대화방에 참여한 전문가 Agent입니다. 근거가 드러나는 짧은 답변을 작성하세요.",
             user_prompt=prompt,
         )
         content = result.content if result.used_llm and result.content else self._fallback(problem, persona)
@@ -38,7 +26,12 @@ class SpecialistAgent:
             agent_name=persona.name,
             role=persona.role,
             content=content,
-            metadata={"source": "llm" if result.used_llm and result.content else "fallback", "error": result.error},
+            metadata={
+                "source": "llm" if result.used_llm and result.content else "fallback",
+                "error": result.error,
+                "response_mode": "initial",
+                "reasoning_basis": ["problem", "persona_profile"],
+            },
         )
 
     def respond(
@@ -49,33 +42,16 @@ class SpecialistAgent:
         moderator_note: str,
         round_number: int,
     ) -> AgentMessage:
-        prompt = f"""
-문제:
-{problem}
-
-페르소나:
-- 이름: {persona.name}
-- 역할: {persona.role}
-- 관점: {persona.perspective}
-- 핵심 질문: {", ".join(persona.priority_questions)}
-
-진행 메모:
-{moderator_note}
-
-지금까지의 토론:
-{transcript}
-
-{persona.name}의 관점에서 지금 흐름에 자연스럽게 이어 말하세요.
-반드시 자연스러운 한국어로 작성하고, 고유명사나 기술 약어 외에는 영어를 최소화하세요.
-요구사항:
-- 첫 문장은 바로 자신의 판단이나 보완점으로 시작하세요.
-- 다른 Agent 이름은 꼭 필요할 때만 자연스럽게 언급하세요.
-- "동의합니다", "좋습니다", "~님 말처럼" 같은 시작을 반복하지 마세요.
-- 질문으로 끝내야 한다는 규칙은 없습니다. 필요한 경우에만 짧게 물어보세요.
-- 2~4문장으로, 실제 단체 대화방에서 말하듯 작성하세요.
-"""
+        prompt = self._build_prompt(
+            problem=problem,
+            persona=persona,
+            mode="debate",
+            transcript=transcript,
+            moderator_note=moderator_note,
+            round_number=round_number,
+        )
         result = self.llm.complete(
-            system_prompt="당신은 한국어 단체 대화방에 참여한 전문가 Agent입니다. 정해진 토론 대본처럼 말하지 말고, 현재 흐름에 짧게 이어 말하세요.",
+            system_prompt="당신은 한국어 단체 대화방에 참여한 전문가 Agent입니다. 앞선 주장에 반응하면서 근거와 다음 행동을 함께 제시하세요.",
             user_prompt=prompt,
             temperature=0.45,
         )
@@ -94,6 +70,8 @@ class SpecialistAgent:
                 "source": "llm" if result.used_llm and result.content else "fallback",
                 "error": result.error,
                 "round": round_number,
+                "response_mode": "debate",
+                "reasoning_basis": ["problem", "transcript", "moderator_note"],
             },
         )
 
@@ -105,32 +83,14 @@ class SpecialistAgent:
         user_content: str,
         round_number: int,
     ) -> AgentMessage:
-        prompt = f"""
-문제:
-{problem}
-
-페르소나:
-- 이름: {persona.name}
-- 역할: {persona.role}
-- 관점: {persona.perspective}
-- 핵심 질문: {", ".join(persona.priority_questions)}
-
-지금까지의 대화:
-{transcript}
-
-사용자의 새 의견:
-{user_content}
-
-{persona.name}의 관점에서 사용자의 새 의견에 바로 답하세요.
-반드시 자연스러운 한국어로 작성하고, 고유명사나 기술 약어 외에는 영어를 최소화하세요.
-요구사항:
-- 사용자의 말을 다시 길게 정리하지 말고 바로 답하세요.
-- 첫 문장에 추천, 우려, 보완점 중 하나를 분명히 말하세요.
-- 이전 Agent의 주장은 꼭 필요할 때만 짧게 연결하세요.
-- "좋습니다. 지금 질문은..." 같은 상담원식 시작을 피하세요.
-- 마지막은 질문보다 다음 행동이나 판단 기준으로 끝내는 편을 우선하세요.
-- 2~4문장으로, 단체 대화방에서 말하듯 작성하세요.
-"""
+        prompt = self._build_prompt(
+            problem=problem,
+            persona=persona,
+            mode="user_response",
+            transcript=transcript,
+            user_content=user_content,
+            round_number=round_number,
+        )
         result = self.llm.complete(
             system_prompt="당신은 한국어 단체 대화방에 참여한 전문가 Agent입니다. 사용자의 말에 바로 반응하고, 짧고 실제적인 다음 판단을 제안하세요.",
             user_prompt=prompt,
@@ -153,8 +113,90 @@ class SpecialistAgent:
                 "round": round_number,
                 "phase": "user_response",
                 "responds_to": "user",
+                "response_mode": "user_response",
+                "reasoning_basis": ["problem", "transcript", "user_content"],
             },
         )
+
+    def _build_prompt(
+        self,
+        problem: str,
+        persona: Persona,
+        mode: str,
+        transcript: str,
+        moderator_note: str | None = None,
+        user_content: str | None = None,
+        round_number: int | None = None,
+    ) -> str:
+        context_block = self._context_block(
+            problem=problem,
+            transcript=transcript,
+            user_content=user_content,
+        )
+        mode_guide = {
+            "initial": "첫 발언입니다. 관점을 분명히 밝히고 바로 실행 가능한 제안을 하나 남기세요.",
+            "debate": "이어 말하기 라운드입니다. 앞선 주장 중 하나에 반응하면서 충돌을 좁히세요.",
+            "user_response": "사용자 개입 라운드입니다. 사용자 의견을 실행 판단으로 바꾸는 답변을 하세요.",
+        }[mode]
+        optional_block = ""
+        if moderator_note:
+            optional_block += f"\n사회자 메모:\n{moderator_note}\n"
+        if user_content:
+            optional_block += f"\n사용자 새 의견:\n{user_content}\n"
+        round_line = f"\n현재 라운드: {round_number}" if round_number is not None else ""
+        return f"""
+문제 컨텍스트:
+{context_block}
+{round_line}
+
+페르소나 프로필:
+- 이름: {persona.name}
+- 역할: {persona.role}
+- 관점: {persona.perspective}
+- 핵심 질문: {", ".join(persona.priority_questions)}
+{optional_block}
+최근 토론 핵심:
+{transcript}
+
+작성 지침:
+- {mode_guide}
+- 반드시 자연스러운 한국어로 작성하고, 고유명사나 기술 약어 외에는 영어를 최소화하세요.
+- 아래 형식을 지키되 항목 제목은 쓰지 마세요.
+  1) 판단 1문장
+  2) 이유 1~2문장(위 컨텍스트를 근거로)
+  3) 다음 행동 1문장
+- 총 3~4문장으로 짧고 구체적으로 작성하세요.
+""".strip()
+
+    def _context_block(self, problem: str, transcript: str, user_content: str | None) -> str:
+        problem_summary = self._summarize(problem, limit=110)
+        transcript_summary = (
+            "이전 라운드 핵심 없음"
+            if not transcript or transcript.strip() == "아직 발언이 없습니다."
+            else self._summarize(transcript, limit=170)
+        )
+        constraint_source = f"{problem}\n{user_content or ''}"
+        constraints = self._extract_constraints(constraint_source)
+        return (
+            f"- 문제 요약: {problem_summary}\n"
+            f"- 이전 라운드 핵심: {transcript_summary}\n"
+            f"- 제약조건: {constraints}"
+        )
+
+    def _extract_constraints(self, text: str) -> str:
+        compact = " ".join(text.split())
+        segments = re.split(r"[.!?]\s*", compact)
+        keywords = ("주", "일", "마감", "예산", "비용", "시간", "인원", "리스크", "안정성")
+        hits = [segment.strip() for segment in segments if any(keyword in segment for keyword in keywords)]
+        if hits:
+            return "; ".join(hits[:2])
+        return "명시된 제약 없음"
+
+    def _summarize(self, text: str, limit: int) -> str:
+        compact = " ".join(text.split())
+        if len(compact) <= limit:
+            return compact
+        return f"{compact[: limit - 1].rstrip()}..."
 
     def _fallback(self, problem: str, persona: Persona) -> str:
         first_question = persona.priority_questions[0] if persona.priority_questions else "가장 먼저 검증할 기준을 정해야 합니다."

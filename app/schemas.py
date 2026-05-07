@@ -1,9 +1,19 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Literal, Optional
+from typing import Any, Literal, Optional, TypedDict
 
 from pydantic import BaseModel, Field
+
+
+class AgentMessageMetadata(TypedDict, total=False):
+    source: str
+    error: str | None
+    phase: str
+    round: int
+    responds_to: str
+    response_mode: Literal["initial", "debate", "user_response"]
+    reasoning_basis: list[str]
 
 
 class Persona(BaseModel):
@@ -44,7 +54,7 @@ class AgentMessage(BaseModel):
     agent_name: str
     role: str
     content: str
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    metadata: AgentMessageMetadata = Field(default_factory=dict)
 
 
 class SolveRequest(BaseModel):

@@ -10,6 +10,9 @@ from app.schemas import AgentMessage, SolveResponse
 
 
 class Supervisor:
+    QUALITY_THRESHOLD = 4.0
+    MAX_SYNTHESIS_RETRIES = 2
+
     def __init__(self, llm: LLMClient):
         self.persona_generator = PersonaGenerator(llm)
         self.moderator = ModeratorAgent(llm)
@@ -52,8 +55,29 @@ class Supervisor:
         critique = self.critic.review(problem, debate_messages)
         synthesis = self.synthesizer.synthesize(problem, debate_messages, critique)
         evaluation = self.evaluator.evaluate(problem, debate_messages, critique, synthesis)
+        synthesis_messages = [synthesis]
 
-        messages.extend([critique, synthesis])
+        refine_attempt = 0
+        while (
+            self._evaluation_average(evaluation) < self.QUALITY_THRESHOLD
+            and refine_attempt < self.MAX_SYNTHESIS_RETRIES
+        ):
+            refine_attempt += 1
+            synthesis = self.synthesizer.synthesize(
+                problem,
+                debate_messages,
+                critique,
+                improvement_suggestions=evaluation.improvement_suggestions,
+                previous_synthesis=synthesis.content,
+            )
+            synthesis.metadata["phase"] = "refine"
+            synthesis.metadata["round"] = refine_attempt
+            synthesis_messages.append(synthesis)
+            evaluation = self.evaluator.evaluate(problem, debate_messages, critique, synthesis)
+            evaluation.metadata["refine_attempt"] = refine_attempt
+            evaluation.metadata["average_score"] = self._evaluation_average(evaluation)
+
+        messages.extend([critique, *synthesis_messages])
         used_llm = any(message.metadata.get("source") == "llm" for message in messages)
         return SolveResponse(
             problem=problem,
@@ -161,3 +185,100 @@ class Supervisor:
             content="아직 별도의 비판 메시지가 없습니다. 최신 사용자 의견과 에이전트 응답을 기준으로 실행 가능성을 점검하세요.",
             metadata={"source": "fallback", "phase": "implicit"},
         )
+
+    def _select_reply_personas(
+        self,
+        personas,
+        user_content: str,
+        max_agents: int,
+        round_number: int,
+    ):
+        if not personas:
+            return []
+
+        limit = max(1, min(max_agents, 3, len(personas)))
+        start_index = (round_number - 1) % len(personas)
+        query_terms = self._keyword_terms(user_content)
+        scored = []
+
+        for index, persona in enumerate(personas):
+            profile = " ".join(
+                [
+                    persona.name,
+                    persona.role,
+                    persona.perspective,
+                    *persona.priority_questions,
+                ]
+            )
+            score = self._relevance_score(query_terms, profile)
+            rotation_distance = (index - start_index) % len(personas)
+            scored.append((score, rotation_distance, index, persona))
+
+        scored.sort(key=lambda item: (-item[0], item[1], item[2]))
+        return [persona for _, _, _, persona in scored[:limit]]
+
+    def _relevance_score(self, query_terms: set[str], profile: str) -> int:
+        profile_terms = self._keyword_terms(profile)
+        profile_text = self._normalized_text(profile)
+        score = len(query_terms & profile_terms) * 2
+        score += sum(1 for term in query_terms if len(term) >= 2 and term in profile_text)
+        return score
+
+    def _keyword_terms(self, text: str) -> set[str]:
+        normalized = self._normalized_text(text)
+        terms: set[str] = set()
+        for term in normalized.split():
+            if len(term) < 2 or term.isdigit():
+                continue
+            terms.add(term)
+            stripped = self._strip_korean_suffix(term)
+            if len(stripped) >= 2 and not stripped.isdigit():
+                terms.add(stripped)
+        return terms
+
+    def _normalized_text(self, text: str) -> str:
+        return "".join(
+            character.lower() if character.isalnum() else " "
+            for character in text
+        )
+
+    def _strip_korean_suffix(self, term: str) -> str:
+        suffixes = (
+            "으로",
+            "에서",
+            "에게",
+            "한테",
+            "부터",
+            "까지",
+            "처럼",
+            "보다",
+            "라고",
+            "이라고",
+            "라면",
+            "이면",
+            "다고",
+            "은",
+            "는",
+            "이",
+            "가",
+            "을",
+            "를",
+            "과",
+            "와",
+            "도",
+            "만",
+            "로",
+        )
+        for suffix in suffixes:
+            if term.endswith(suffix) and len(term) > len(suffix) + 1:
+                return term[: -len(suffix)]
+        return term
+
+    def _evaluation_average(self, evaluation) -> float:
+        total = (
+            evaluation.consistency
+            + evaluation.specificity
+            + evaluation.risk_awareness
+            + evaluation.feasibility
+        )
+        return total / 4
