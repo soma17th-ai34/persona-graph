@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from app.agents.critic import CriticAgent
 from app.agents.evaluator import EvaluatorAgent
 from app.agents.moderator import ModeratorAgent
@@ -7,6 +9,9 @@ from app.agents.synthesizer import SynthesizerAgent
 from app.characters import assign_characters
 from app.llm import LLMClient
 from app.schemas import AgentMessage, SolveResponse
+
+
+StreamEvent = dict[str, object]
 
 
 class Supervisor:
@@ -23,15 +28,43 @@ class Supervisor:
         self.llm = llm
 
     def solve(self, problem: str, persona_count: int, debate_rounds: int = 1) -> SolveResponse:
+        final_response = None
+        for event in self.solve_stream(problem, persona_count, debate_rounds):
+            if event["type"] == "final_response":
+                final_response = event["response"]
+        if final_response is None:
+            raise RuntimeError("Solve stream ended without a final response.")
+        return final_response
+
+    def solve_stream(
+        self,
+        problem: str,
+        persona_count: int,
+        debate_rounds: int = 1,
+    ):
+        yield self._started_event("persona_generator", "페르소나 생성기", "persona_generation")
         personas, persona_message = self.persona_generator.generate(problem, persona_count)
         personas = assign_characters(personas)
+        yield {"type": "personas_ready", "personas": personas}
+        yield self._message_event(persona_message)
+
+        yield self._started_event("moderator", "사회자 에이전트", "moderator")
         opening = self.moderator.open(problem, personas)
-        specialist_messages = [self.specialist.answer(problem, persona) for persona in personas]
+        yield self._message_event(opening)
+
+        specialist_messages: list[AgentMessage] = []
+        for persona in personas:
+            yield self._started_event(persona.id, persona.name, "specialist")
+            message = self.specialist.answer(problem, persona)
+            specialist_messages.append(message)
+            yield self._message_event(message)
+
         discussion_messages: list[AgentMessage] = []
 
         messages: list[AgentMessage] = [persona_message, opening, *specialist_messages]
 
         for round_number in range(1, debate_rounds + 1):
+            yield self._started_event("moderator", "사회자 에이전트", "moderator", round_number)
             moderator_note = self.moderator.guide(
                 problem=problem,
                 personas=personas,
@@ -39,8 +72,10 @@ class Supervisor:
                 round_number=round_number,
             )
             messages.append(moderator_note)
+            yield self._message_event(moderator_note)
 
             for persona in personas:
+                yield self._started_event(persona.id, persona.name, "debate", round_number)
                 response = self.specialist.respond(
                     problem=problem,
                     persona=persona,
@@ -50,10 +85,18 @@ class Supervisor:
                 )
                 discussion_messages.append(response)
                 messages.append(response)
+                yield self._message_event(response)
 
         debate_messages = [*specialist_messages, *discussion_messages]
+        yield self._started_event("critic", "비판 에이전트", "critic")
         critique = self.critic.review(problem, debate_messages)
+        yield self._message_event(critique)
+
+        yield self._started_event("synthesizer", "종합 에이전트", "synthesizer")
         synthesis = self.synthesizer.synthesize(problem, debate_messages, critique)
+        yield self._message_event(synthesis)
+
+        yield self._started_event("evaluator", "평가 에이전트", "evaluator")
         evaluation = self.evaluator.evaluate(problem, debate_messages, critique, synthesis)
         synthesis_messages = [synthesis]
 
@@ -79,7 +122,7 @@ class Supervisor:
 
         messages.extend([critique, *synthesis_messages])
         used_llm = any(message.metadata.get("source") == "llm" for message in messages)
-        return SolveResponse(
+        response = SolveResponse(
             problem=problem,
             personas=personas,
             messages=messages,
@@ -88,6 +131,7 @@ class Supervisor:
             used_llm=used_llm,
             model=self.llm.model,
         )
+        yield {"type": "final_response", "response": response}
 
     def continue_discussion(
         self,
@@ -95,8 +139,27 @@ class Supervisor:
         user_content: str,
         max_agents: int = 2,
     ) -> SolveResponse:
+        final_response = None
+        for event in self.continue_discussion_stream(response, user_content, max_agents):
+            if event["type"] == "final_response":
+                final_response = event["response"]
+        if final_response is None:
+            raise RuntimeError("Discussion stream ended without a final response.")
+        return final_response
+
+    def continue_discussion_stream(
+        self,
+        response: SolveResponse,
+        user_content: str,
+        max_agents: int = 2,
+    ):
         round_number = self._next_round(response.messages)
-        selected_personas = response.personas[: max(1, min(max_agents, 3))]
+        selected_personas = self._select_reply_personas(
+            personas=response.personas,
+            user_content=user_content,
+            max_agents=max_agents,
+            round_number=round_number,
+        )
         user_message = AgentMessage(
             stage="user",
             agent_id="user",
@@ -109,10 +172,12 @@ class Supervisor:
                 "round": round_number,
             },
         )
+        yield self._message_event(user_message)
 
         messages = [*response.messages, user_message]
         agent_replies: list[AgentMessage] = []
         for persona in selected_personas:
+            yield self._started_event(persona.id, persona.name, "debate", round_number)
             reply = self.specialist.reply_to_user(
                 problem=response.problem,
                 persona=persona,
@@ -121,9 +186,11 @@ class Supervisor:
                 round_number=round_number,
             )
             agent_replies.append(reply)
+            yield self._message_event(reply)
 
         messages.extend(agent_replies)
 
+        yield self._started_event("synthesizer", "종합 에이전트", "synthesizer", round_number)
         synthesis = self.synthesizer.synthesize(
             response.problem,
             self._discussion_messages(messages),
@@ -132,7 +199,9 @@ class Supervisor:
         synthesis.metadata["round"] = round_number
         synthesis.metadata["phase"] = "followup_synthesis"
         messages.append(synthesis)
+        yield self._message_event(synthesis)
 
+        yield self._started_event("evaluator", "평가 에이전트", "evaluator", round_number)
         evaluation = self.evaluator.evaluate(
             response.problem,
             self._discussion_messages(messages),
@@ -140,7 +209,7 @@ class Supervisor:
             synthesis,
         )
         used_llm = response.used_llm or any(message.metadata.get("source") == "llm" for message in messages)
-        return response.model_copy(
+        updated = response.model_copy(
             update={
                 "messages": messages,
                 "final_answer": synthesis.content,
@@ -149,6 +218,27 @@ class Supervisor:
                 "model": self.llm.model,
             }
         )
+        yield {"type": "final_response", "response": updated}
+
+    def _started_event(
+        self,
+        agent_id: str,
+        agent_name: str,
+        stage: str,
+        round_number: int | None = None,
+    ) -> StreamEvent:
+        event: StreamEvent = {
+            "type": "agent_started",
+            "agent_id": agent_id,
+            "agent_name": agent_name,
+            "stage": stage,
+        }
+        if round_number is not None:
+            event["round"] = round_number
+        return event
+
+    def _message_event(self, message: AgentMessage) -> StreamEvent:
+        return {"type": "agent_message", "message": message}
 
     def _format_transcript(self, messages: list[AgentMessage]) -> str:
         if not messages:
@@ -282,3 +372,5 @@ class Supervisor:
             + evaluation.feasibility
         )
         return total / 4
+
+
