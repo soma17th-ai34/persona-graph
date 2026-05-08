@@ -565,12 +565,29 @@ def render_response(
 ) -> None:
     render_topic_context(response)
     status = "LLM API 사용" if response.used_llm else "로컬 폴백 사용"
+    evaluation = response.evaluation
+    average_score = (
+        evaluation.consistency
+        + evaluation.specificity
+        + evaluation.risk_awareness
+        + evaluation.feasibility
+    ) / 4
+    final_response_retries = int(evaluation.metadata.get("final_response_retries", 0) or 0)
+    quality_threshold = evaluation.metadata.get("quality_threshold")
+    next_action = evaluation.metadata.get("next_action")
     st.caption(f"상태: 토론 완료 · 응답 방식: {status}")
     with st.expander("실행 정보 보기", expanded=False):
         st.markdown(f"- model: `{response.model}`")
         if response.run_id:
             st.markdown(f"- run_id: `{response.run_id}`")
         st.markdown(f"- 사용한 응답 방식: `{status}`")
+        st.markdown(f"- evaluator 평균 점수: `{average_score:.2f}/5`")
+        st.markdown(f"- evaluator 세부 점수: `일관성 {evaluation.consistency} / 구체성 {evaluation.specificity} / 리스크 {evaluation.risk_awareness} / 실행가능성 {evaluation.feasibility}`")
+        if isinstance(quality_threshold, (int, float)):
+            st.markdown(f"- 품질 기준(quality threshold): `{float(quality_threshold):.2f}`")
+        st.markdown(f"- 점수 미달로 재생성한 final response 횟수: `{final_response_retries}`회")
+        if isinstance(next_action, str):
+            st.markdown(f"- evaluator 다음 동작: `{next_action}`")
 
     render_conversation_room(response)
 

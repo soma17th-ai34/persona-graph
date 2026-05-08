@@ -15,8 +15,8 @@ StreamEvent = dict[str, object]
 
 
 class Supervisor:
-    QUALITY_THRESHOLD = 4.0
-    MAX_SYNTHESIS_RETRIES = 2
+    QUALITY_THRESHOLD = 4.8
+    MAX_FINAL_RESPONSE_RETRIES = 2
 
     def __init__(self, llm: LLMClient):
         self.persona_generator = PersonaGenerator(llm)
@@ -90,22 +90,47 @@ class Supervisor:
         debate_messages = [*specialist_messages, *discussion_messages]
         yield self._started_event("critic", "비판 에이전트", "critic")
         critique = self.critic.review(problem, debate_messages)
+        critique.metadata["phase"] = "quality_review"
+        messages.append(critique)
         yield self._message_event(critique)
 
         yield self._started_event("synthesizer", "종합 에이전트", "synthesizer")
         synthesis = self.synthesizer.synthesize(problem, debate_messages, critique)
+        synthesis.metadata["phase"] = "initial_synthesis"
+        messages.append(synthesis)
         yield self._message_event(synthesis)
 
-        yield self._started_event("evaluator", "평가 에이전트", "evaluator")
-        evaluation = self.evaluator.evaluate(problem, debate_messages, critique, synthesis)
-        synthesis_messages = [synthesis]
+        final_response_retries = 0
+        while True:
+            yield self._started_event("evaluator", "평가 에이전트", "evaluator")
+            evaluation = self.evaluator.evaluate(problem, debate_messages, critique, synthesis)
+            average_score = self._evaluation_average(evaluation)
+            evaluation.metadata["average_score"] = average_score
+            evaluation.metadata["quality_threshold"] = self.QUALITY_THRESHOLD
+            evaluation.metadata["final_response_retries"] = final_response_retries
 
-        refine_attempt = 0
-        while (
-            self._evaluation_average(evaluation) < self.QUALITY_THRESHOLD
-            and refine_attempt < self.MAX_SYNTHESIS_RETRIES
-        ):
-            refine_attempt += 1
+            needs_retry = average_score < self.QUALITY_THRESHOLD
+            can_retry = final_response_retries < self.MAX_FINAL_RESPONSE_RETRIES
+            evaluation.metadata["next_action"] = "retry_final_response" if (needs_retry and can_retry) else "finish"
+            if not (needs_retry and can_retry):
+                break
+
+            final_response_retries += 1
+            retry_notice = AgentMessage(
+                stage="synthesizer",
+                agent_id="synthesizer",
+                agent_name="종합 에이전트",
+                role="평가 피드백으로 최종 결론을 개선하는 역할",
+                content=(
+                    f"평가 평균 {average_score:.2f}/5가 기준 {self.QUALITY_THRESHOLD:.2f} 미만이라 "
+                    f"최종 결론을 {final_response_retries}회차로 다시 종합합니다."
+                ),
+                metadata={"source": "system", "phase": "final_retry_notice", "round": final_response_retries},
+            )
+            messages.append(retry_notice)
+            yield self._message_event(retry_notice)
+
+            yield self._started_event("synthesizer", "종합 에이전트", "synthesizer")
             synthesis = self.synthesizer.synthesize(
                 problem,
                 debate_messages,
@@ -113,14 +138,10 @@ class Supervisor:
                 improvement_suggestions=evaluation.improvement_suggestions,
                 previous_synthesis=synthesis.content,
             )
-            synthesis.metadata["phase"] = "refine"
-            synthesis.metadata["round"] = refine_attempt
-            synthesis_messages.append(synthesis)
-            evaluation = self.evaluator.evaluate(problem, debate_messages, critique, synthesis)
-            evaluation.metadata["refine_attempt"] = refine_attempt
-            evaluation.metadata["average_score"] = self._evaluation_average(evaluation)
-
-        messages.extend([critique, *synthesis_messages])
+            synthesis.metadata["phase"] = "retry_synthesis"
+            synthesis.metadata["round"] = final_response_retries
+            messages.append(synthesis)
+            yield self._message_event(synthesis)
         used_llm = any(message.metadata.get("source") == "llm" for message in messages)
         response = SolveResponse(
             problem=problem,
@@ -201,13 +222,58 @@ class Supervisor:
         messages.append(synthesis)
         yield self._message_event(synthesis)
 
-        yield self._started_event("evaluator", "평가 에이전트", "evaluator", round_number)
-        evaluation = self.evaluator.evaluate(
-            response.problem,
-            self._discussion_messages(messages),
-            self._latest_critique(messages),
-            synthesis,
-        )
+        final_response_retries = 0
+        while True:
+            yield self._started_event("evaluator", "평가 에이전트", "evaluator", round_number)
+            evaluation = self.evaluator.evaluate(
+                response.problem,
+                self._discussion_messages(messages),
+                self._latest_critique(messages),
+                synthesis,
+            )
+            average_score = self._evaluation_average(evaluation)
+            evaluation.metadata["average_score"] = average_score
+            evaluation.metadata["quality_threshold"] = self.QUALITY_THRESHOLD
+            evaluation.metadata["final_response_retries"] = final_response_retries
+
+            needs_retry = average_score < self.QUALITY_THRESHOLD
+            can_retry = final_response_retries < self.MAX_FINAL_RESPONSE_RETRIES
+            evaluation.metadata["next_action"] = "retry_final_response" if (needs_retry and can_retry) else "finish"
+            if not (needs_retry and can_retry):
+                break
+
+            final_response_retries += 1
+            retry_notice = AgentMessage(
+                stage="synthesizer",
+                agent_id="synthesizer",
+                agent_name="종합 에이전트",
+                role="평가 피드백으로 최종 결론을 개선하는 역할",
+                content=(
+                    f"평가 평균 {average_score:.2f}/5가 기준 {self.QUALITY_THRESHOLD:.2f} 미만이라 "
+                    f"최종 결론을 {final_response_retries}회차로 다시 종합합니다."
+                ),
+                metadata={
+                    "source": "system",
+                    "phase": "followup_final_retry_notice",
+                    "round": round_number,
+                },
+            )
+            messages.append(retry_notice)
+            yield self._message_event(retry_notice)
+
+            yield self._started_event("synthesizer", "종합 에이전트", "synthesizer", round_number)
+            synthesis = self.synthesizer.synthesize(
+                response.problem,
+                self._discussion_messages(messages),
+                self._latest_critique(messages),
+                improvement_suggestions=evaluation.improvement_suggestions,
+                previous_synthesis=synthesis.content,
+            )
+            synthesis.metadata["round"] = round_number
+            synthesis.metadata["phase"] = "followup_retry_synthesis"
+            synthesis.metadata["retry"] = final_response_retries
+            messages.append(synthesis)
+            yield self._message_event(synthesis)
         used_llm = response.used_llm or any(message.metadata.get("source") == "llm" for message in messages)
         updated = response.model_copy(
             update={
