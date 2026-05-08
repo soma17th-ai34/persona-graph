@@ -47,6 +47,8 @@ def persona_intro_item(persona) -> dict:
 def message_item(message, personas_by_id: dict) -> dict | None:
     if message.stage == "persona_generation":
         return None
+    if message.stage == "critic":
+        return None
     if message.stage == "user":
         return {
             "kind": "user",

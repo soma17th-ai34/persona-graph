@@ -121,11 +121,16 @@ def consume_chat_stream(
             live_personas = list(event.get("personas", []))
             active_event = None
         elif event_type == "agent_started":
+            if event.get("stage") in {"critic", "evaluator"}:
+                active_event = None
+                continue
             active_event = event
         elif event_type == "agent_message":
             message = event.get("message")
             if message is not None:
                 if message.stage == "persona_generation":
+                    active_event = None
+                elif message.stage == "critic":
                     active_event = None
                 elif message.stage == "user":
                     live_messages.append(message)

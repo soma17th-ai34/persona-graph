@@ -46,8 +46,10 @@ class ModeratorAgent:
         personas: list[Persona],
         transcript: str,
         round_number: int,
+        focus: str | None = None,
     ) -> AgentMessage:
         panel = self._persona_panel(personas)
+        focus_text = focus or "없음"
         prompt = f"""
 문제:
 {problem}
@@ -57,6 +59,9 @@ class ModeratorAgent:
 
 지금까지의 토론:
 {transcript}
+
+이번 라운드에서 반드시 좁힐 부족한 지점:
+{focus_text}
 
 사회자로서 {round_number}번째 상호 응답 라운드를 여세요.
 다음 에이전트들이 앞선 발언 중 하나에 직접 동의, 반박, 보완하도록 질문을 던지세요.
@@ -74,7 +79,7 @@ class ModeratorAgent:
         content = (
             result.content
             if result.used_llm and result.content
-            else self._guide_fallback(personas, round_number)
+            else self._guide_fallback(personas, round_number, focus)
         )
         return self._message(
             role="상호 응답 라운드의 논점을 좁히는 진행자",
@@ -114,9 +119,10 @@ class ModeratorAgent:
 이후 라운드에서는 새 의견만 던지지 말고, 앞선 발언 중 하나를 짚어 동의, 반박, 보완 중 하나로 이어가겠습니다.
 마지막에는 비판 에이전트가 빈틈을 잡고, 종합 에이전트가 실행 가능한 결론으로 묶겠습니다."""
 
-    def _guide_fallback(self, personas: list[Persona], round_number: int) -> str:
+    def _guide_fallback(self, personas: list[Persona], round_number: int, focus: str | None = None) -> str:
         names = ", ".join(persona.name for persona in personas)
+        focus_line = f"\n특히 이번에는 아래 부족한 지점을 먼저 좁히겠습니다: {focus}" if focus else ""
         return f"""{round_number}번째 상호 응답 라운드입니다.
 {names}는 직전 발언 또는 가장 강한 주장 하나를 골라 직접 받아주세요.
 이번 라운드의 목표는 아이디어를 더 늘리는 것이 아니라, 충돌하는 기준과 실행 조건을 좁히는 것입니다.
-각 발언은 동의할 점, 고쳐야 할 점, 다음 결정에 필요한 질문을 남기는 방식으로 이어가겠습니다."""
+각 발언은 동의할 점, 고쳐야 할 점, 다음 결정에 필요한 질문을 남기는 방식으로 이어가겠습니다.{focus_line}"""

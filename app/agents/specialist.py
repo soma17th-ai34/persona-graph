@@ -1,8 +1,13 @@
-from app.llm import LLMClient
+from __future__ import annotations
+
+from app.llm import LLMClient, parse_json_object
 from app.schemas import AgentMessage, Persona
 
 
 class SpecialistAgent:
+    SELF_VERIFICATION_THRESHOLD = 4
+    SELF_VERIFICATION_MAX_ATTEMPTS = 3
+
     def __init__(self, llm: LLMClient):
         self.llm = llm
 
@@ -27,18 +32,23 @@ class SpecialistAgent:
 - 다른 Agent에게 넘기는 질문으로 끝낼 필요는 없습니다.
 - 3~5문장으로 짧고 구체적으로 작성하세요.
 """
-        result = self.llm.complete(
+        completion = self._complete_with_self_verification(
             system_prompt="당신은 한국어 단체 대화방에 함께 있는 전문가 Agent입니다. 보고서가 아니라 채팅방 발언처럼 짧고 자연스럽게 말하세요.",
             user_prompt=prompt,
+            fallback_content=self._fallback(problem, persona),
+            verification_goal="페르소나 역할과 관점이 드러나고, 사용자 질문에 직접 답하며, 실행 가능한 제안을 포함한 3~5문장 답변",
         )
-        content = result.content if result.used_llm and result.content else self._fallback(problem, persona)
         return AgentMessage(
             stage="specialist",
             agent_id=persona.id,
             agent_name=persona.name,
             role=persona.role,
-            content=content,
-            metadata={"source": "llm" if result.used_llm and result.content else "fallback", "error": result.error},
+            content=str(completion["content"]),
+            metadata={
+                "source": completion["source"],
+                "error": completion["error"],
+                "self_verification": completion["self_verification"],
+            },
         )
 
     def respond(
@@ -74,26 +84,24 @@ class SpecialistAgent:
 - 질문으로 끝내야 한다는 규칙은 없습니다. 필요한 경우에만 짧게 물어보세요.
 - 2~4문장으로, 실제 단체 대화방에서 말하듯 작성하세요.
 """
-        result = self.llm.complete(
+        completion = self._complete_with_self_verification(
             system_prompt="당신은 한국어 단체 대화방에 참여한 전문가 Agent입니다. 정해진 토론 대본처럼 말하지 말고, 현재 흐름에 짧게 이어 말하세요.",
             user_prompt=prompt,
+            fallback_content=self._response_fallback(persona, round_number),
+            verification_goal="앞선 토론 흐름에 직접 반응하고, 자신의 관점에서 근거 있는 판단을 남기는 2~4문장 답변",
             temperature=0.45,
-        )
-        content = (
-            result.content
-            if result.used_llm and result.content
-            else self._response_fallback(persona, round_number)
         )
         return AgentMessage(
             stage="debate",
             agent_id=persona.id,
             agent_name=persona.name,
             role=persona.role,
-            content=content,
+            content=str(completion["content"]),
             metadata={
-                "source": "llm" if result.used_llm and result.content else "fallback",
-                "error": result.error,
+                "source": completion["source"],
+                "error": completion["error"],
                 "round": round_number,
+                "self_verification": completion["self_verification"],
             },
         )
 
@@ -131,30 +139,149 @@ class SpecialistAgent:
 - 마지막은 질문보다 다음 행동이나 판단 기준으로 끝내는 편을 우선하세요.
 - 2~4문장으로, 단체 대화방에서 말하듯 작성하세요.
 """
-        result = self.llm.complete(
+        completion = self._complete_with_self_verification(
             system_prompt="당신은 한국어 단체 대화방에 참여한 전문가 Agent입니다. 사용자의 말에 바로 반응하고, 짧고 실제적인 다음 판단을 제안하세요.",
             user_prompt=prompt,
+            fallback_content=self._user_reply_fallback(persona, user_content, round_number),
+            verification_goal="사용자의 새 의견에 직접 답하고, 추천/우려/보완점과 다음 판단 기준을 포함한 2~4문장 답변",
             temperature=0.45,
-        )
-        content = (
-            result.content
-            if result.used_llm and result.content
-            else self._user_reply_fallback(persona, user_content, round_number)
         )
         return AgentMessage(
             stage="debate",
             agent_id=persona.id,
             agent_name=persona.name,
             role=persona.role,
-            content=content,
+            content=str(completion["content"]),
             metadata={
-                "source": "llm" if result.used_llm and result.content else "fallback",
-                "error": result.error,
+                "source": completion["source"],
+                "error": completion["error"],
                 "round": round_number,
                 "phase": "user_response",
                 "responds_to": "user",
+                "self_verification": completion["self_verification"],
             },
         )
+
+    def _complete_with_self_verification(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        fallback_content: str,
+        verification_goal: str,
+        temperature: float | None = None,
+    ) -> dict[str, object]:
+        result = self.llm.complete(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            temperature=temperature,
+        )
+        if not result.used_llm or not result.content:
+            verification = self._local_verification(fallback_content, attempts=1)
+            return {
+                "content": fallback_content,
+                "source": "fallback",
+                "error": result.error,
+                "self_verification": verification,
+            }
+
+        content = result.content
+        verification = self._local_verification(content, attempts=1)
+        for attempt in range(1, self.SELF_VERIFICATION_MAX_ATTEMPTS + 1):
+            verification = self._verify_draft(content, verification_goal, attempt)
+            if verification["passed"] or attempt == self.SELF_VERIFICATION_MAX_ATTEMPTS:
+                break
+
+            refined = self.llm.complete(
+                system_prompt=system_prompt,
+                user_prompt=self._refine_prompt(user_prompt, content, str(verification.get("issue", ""))),
+                temperature=0.25,
+            )
+            if not refined.used_llm or not refined.content:
+                verification["error"] = refined.error
+                break
+            content = refined.content
+
+        return {
+            "content": content,
+            "source": "llm",
+            "error": result.error,
+            "self_verification": verification,
+        }
+
+    def _verify_draft(self, content: str, verification_goal: str, attempt: int) -> dict[str, object]:
+        prompt = f"""
+검증 목표:
+{verification_goal}
+
+검증할 답변:
+{content}
+
+답변이 검증 목표를 만족하는지 평가하세요. 반드시 JSON 객체만 반환하세요.
+- score: integer 1-5
+- issue: 부족한 점을 한국어 한 문장으로 작성. 충분하면 빈 문자열
+"""
+        result = self.llm.complete(
+            system_prompt="당신은 한국어 다중 에이전트 발언을 검증하는 평가자입니다. 엄격한 JSON만 반환하세요.",
+            user_prompt=prompt,
+            temperature=0.05,
+        )
+        parsed = parse_json_object(result.content) if result.used_llm else None
+        if not isinstance(parsed, dict):
+            verification = self._local_verification(content, attempts=attempt)
+            verification["method"] = "local"
+            verification["error"] = result.error or "Unable to parse self verification JSON."
+            return verification
+
+        score = self._verification_score(parsed.get("score"))
+        return {
+            "score": score,
+            "passed": score >= self.SELF_VERIFICATION_THRESHOLD,
+            "threshold": self.SELF_VERIFICATION_THRESHOLD,
+            "attempts": attempt,
+            "method": "llm",
+            "issue": str(parsed.get("issue", "")).strip(),
+            "error": result.error,
+        }
+
+    def _refine_prompt(self, original_prompt: str, draft: str, issue: str) -> str:
+        return f"""
+원래 요청:
+{original_prompt}
+
+기준 미달 이유:
+{issue or "검증 기준을 충분히 만족하지 못했습니다."}
+
+초안:
+{draft}
+
+위 문제만 고쳐서 같은 형식과 비슷한 길이로 다시 작성하세요.
+새 주제를 추가하지 말고, 사용자 질문과 현재 토론 맥락에 더 직접 맞추세요.
+"""
+
+    def _local_verification(self, content: str, attempts: int) -> dict[str, object]:
+        sentences = [part.strip() for part in content.replace("\n", " ").split(".") if part.strip()]
+        has_decision = any(keyword in content for keyword in ["좋", "우려", "먼저", "기준", "확인", "실행", "판단"])
+        score = 4 if len(sentences) >= 2 and has_decision else 3
+        return {
+            "score": score,
+            "passed": score >= self.SELF_VERIFICATION_THRESHOLD,
+            "threshold": self.SELF_VERIFICATION_THRESHOLD,
+            "attempts": attempts,
+            "method": "local",
+            "issue": "" if score >= self.SELF_VERIFICATION_THRESHOLD else "답변의 판단 근거가 부족합니다.",
+            "error": None,
+        }
+
+    def _verification_score(self, value: object) -> int:
+        try:
+            score = int(value)
+        except (TypeError, ValueError):
+            return 3
+        if score < 1:
+            return 1
+        if score > 5:
+            return 5
+        return score
 
     def _fallback(self, problem: str, persona: Persona) -> str:
         first_question = persona.priority_questions[0] if persona.priority_questions else "가장 먼저 검증할 기준을 정해야 합니다."

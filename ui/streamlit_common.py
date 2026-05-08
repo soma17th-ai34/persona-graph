@@ -26,6 +26,7 @@ STAGE_LABELS = {
     "debate": "Agent 대화",
     "critic": "비판",
     "synthesizer": "최종 종합",
+    "evaluator": "내부 검증",
 }
 
 SOURCE_LABELS = {

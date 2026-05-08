@@ -15,6 +15,9 @@ StreamEvent = dict[str, object]
 
 
 class Supervisor:
+    QUALITY_THRESHOLD = 4.0
+    MAX_EXTRA_EVALUATION_ROUNDS = 1
+
     def __init__(self, llm: LLMClient):
         self.persona_generator = PersonaGenerator(llm)
         self.moderator = ModeratorAgent(llm)
@@ -87,17 +90,20 @@ class Supervisor:
         debate_messages = [*specialist_messages, *discussion_messages]
         yield self._started_event("critic", "비판 에이전트", "critic")
         critique = self.critic.review(problem, debate_messages)
+        critique.metadata["phase"] = "quality_review"
+        messages.append(critique)
         yield self._message_event(critique)
 
-        yield self._started_event("synthesizer", "종합 에이전트", "synthesizer")
-        synthesis = self.synthesizer.synthesize(problem, debate_messages, critique)
-        yield self._message_event(synthesis)
+        synthesis, critique, evaluation, quality_checks = yield from self._verified_synthesis_stream(
+            problem=problem,
+            personas=personas,
+            messages=messages,
+            critique=critique,
+            final_phase="initial_synthesis",
+        )
+        messages.append(synthesis)
 
-        yield self._started_event("evaluator", "평가 에이전트", "evaluator")
-        evaluation = self.evaluator.evaluate(problem, debate_messages, critique, synthesis)
-
-        messages.extend([critique, synthesis])
-        used_llm = any(message.metadata.get("source") == "llm" for message in messages)
+        used_llm = self._used_llm(messages, evaluation, quality_checks)
         response = SolveResponse(
             problem=problem,
             personas=personas,
@@ -166,25 +172,16 @@ class Supervisor:
 
         messages.extend(agent_replies)
 
-        yield self._started_event("synthesizer", "종합 에이전트", "synthesizer", round_number)
-        synthesis = self.synthesizer.synthesize(
-            response.problem,
-            self._discussion_messages(messages),
-            self._latest_critique(messages),
+        synthesis, critique, evaluation, quality_checks = yield from self._verified_synthesis_stream(
+            problem=response.problem,
+            personas=response.personas,
+            messages=messages,
+            critique=self._latest_critique(messages),
+            round_number=round_number,
+            final_phase="followup_synthesis",
         )
-        synthesis.metadata["round"] = round_number
-        synthesis.metadata["phase"] = "followup_synthesis"
         messages.append(synthesis)
-        yield self._message_event(synthesis)
-
-        yield self._started_event("evaluator", "평가 에이전트", "evaluator", round_number)
-        evaluation = self.evaluator.evaluate(
-            response.problem,
-            self._discussion_messages(messages),
-            self._latest_critique(messages),
-            synthesis,
-        )
-        used_llm = response.used_llm or any(message.metadata.get("source") == "llm" for message in messages)
+        used_llm = response.used_llm or self._used_llm(messages, evaluation, quality_checks)
         updated = response.model_copy(
             update={
                 "messages": messages,
@@ -195,6 +192,121 @@ class Supervisor:
             }
         )
         yield {"type": "final_response", "response": updated}
+
+    def _verified_synthesis_stream(
+        self,
+        problem: str,
+        personas,
+        messages: list[AgentMessage],
+        critique: AgentMessage,
+        round_number: int | None = None,
+        final_phase: str = "initial_synthesis",
+    ):
+        quality_checks: list[dict[str, object]] = []
+        refine_instruction: str | None = None
+        previous_synthesis: str | None = None
+        synthesis: AgentMessage | None = None
+        evaluation = None
+        extra_round_used = False
+        max_attempts = self.evaluator.REVERSE_VERIFICATION_MAX_ATTEMPTS
+
+        for attempt in range(1, max_attempts + 1):
+            yield self._started_event("synthesizer", "종합 에이전트", "synthesizer", round_number)
+            synthesis = self.synthesizer.synthesize(
+                problem,
+                self._discussion_messages(messages),
+                critique,
+                improvement_suggestions=evaluation.improvement_suggestions if evaluation else None,
+                previous_synthesis=previous_synthesis,
+                refine_instruction=refine_instruction,
+            )
+            synthesis.metadata["evaluation_attempt"] = attempt
+
+            yield self._started_event("evaluator", "평가 에이전트", "evaluator", round_number)
+            evaluation = self.evaluator.evaluate(
+                problem,
+                self._discussion_messages(messages),
+                critique,
+                synthesis,
+            )
+            reverse_check = self.evaluator.reverse_verify(
+                problem,
+                self._discussion_messages(messages),
+                critique,
+                synthesis,
+            )
+            quality_check = self._quality_check(evaluation, reverse_check, attempt)
+            quality_checks.append(quality_check)
+
+            if quality_check["passed"] or attempt == max_attempts:
+                break
+
+            previous_synthesis = synthesis.content
+            refine_instruction = self._quality_refine_instruction(quality_check, evaluation)
+            if quality_check.get("needs_extra_round") and not extra_round_used:
+                extra_round_used = True
+                critique = yield from self._evaluation_extra_round_stream(
+                    problem=problem,
+                    personas=personas,
+                    messages=messages,
+                    quality_check=quality_check,
+                )
+
+        if synthesis is None or evaluation is None:
+            raise RuntimeError("Evaluation-based synthesis ended without a final result.")
+
+        synthesis.metadata["phase"] = final_phase
+        synthesis.metadata["round"] = round_number
+        synthesis.metadata["quality_check"] = quality_checks[-1] if quality_checks else {}
+        synthesis.metadata["quality_check_history"] = quality_checks
+        synthesis.metadata["extra_round_used"] = extra_round_used
+        evaluation.metadata["quality_check"] = quality_checks[-1] if quality_checks else {}
+        evaluation.metadata["quality_check_history"] = quality_checks
+        yield self._message_event(synthesis)
+        return synthesis, critique, evaluation, quality_checks
+
+    def _evaluation_extra_round_stream(
+        self,
+        problem: str,
+        personas,
+        messages: list[AgentMessage],
+        quality_check: dict[str, object],
+    ):
+        round_number = self._next_round(messages)
+        focus = self._quality_refine_instruction(quality_check, None)
+        yield self._started_event("moderator", "사회자 에이전트", "moderator", round_number)
+        moderator_note = self.moderator.guide(
+            problem=problem,
+            personas=personas,
+            transcript=self._format_transcript(self._discussion_messages(messages)),
+            round_number=round_number,
+            focus=focus,
+        )
+        moderator_note.metadata["phase"] = "evaluation_extra_round"
+        moderator_note.metadata["evaluation_focus"] = focus
+        messages.append(moderator_note)
+        yield self._message_event(moderator_note)
+
+        for persona in personas:
+            yield self._started_event(persona.id, persona.name, "debate", round_number)
+            response = self.specialist.respond(
+                problem=problem,
+                persona=persona,
+                transcript=self._format_transcript(self._discussion_messages(messages)),
+                moderator_note=moderator_note.content,
+                round_number=round_number,
+            )
+            response.metadata["phase"] = "evaluation_extra_round"
+            response.metadata["evaluation_focus"] = focus
+            messages.append(response)
+            yield self._message_event(response)
+
+        yield self._started_event("critic", "비판 에이전트", "critic", round_number)
+        critique = self.critic.review(problem, self._discussion_messages(messages))
+        critique.metadata["phase"] = "evaluation_extra_round"
+        messages.append(critique)
+        yield self._message_event(critique)
+        return critique
 
     def _started_event(
         self,
@@ -238,6 +350,65 @@ class Supervisor:
             for message in messages
             if message.stage in {"user", "specialist", "debate"}
         ]
+
+    def _quality_check(
+        self,
+        evaluation,
+        reverse_check: dict[str, object],
+        attempt: int,
+    ) -> dict[str, object]:
+        average_score = self._evaluation_average(evaluation)
+        quality_passed = average_score >= self.QUALITY_THRESHOLD
+        reverse_passed = bool(reverse_check.get("passed"))
+        return {
+            **reverse_check,
+            "attempt": attempt,
+            "average_score": average_score,
+            "quality_threshold": self.QUALITY_THRESHOLD,
+            "quality_passed": quality_passed,
+            "reverse_passed": reverse_passed,
+            "passed": quality_passed and reverse_passed,
+            "next_action": "finish" if quality_passed and reverse_passed else "refine",
+        }
+
+    def _evaluation_average(self, evaluation) -> float:
+        total = (
+            evaluation.consistency
+            + evaluation.specificity
+            + evaluation.risk_awareness
+            + evaluation.feasibility
+        )
+        return total / 4
+
+    def _quality_refine_instruction(self, quality_check: dict[str, object], evaluation) -> str:
+        explicit_instruction = str(quality_check.get("refine_instruction", "")).strip()
+        issues = []
+        if explicit_instruction:
+            issues.append(explicit_instruction)
+
+        for key in ("missing_points", "unsupported_points", "style_issues"):
+            values = quality_check.get(key)
+            if isinstance(values, list):
+                issues.extend(str(value).strip() for value in values if str(value).strip())
+
+        if evaluation is not None and not quality_check.get("quality_passed"):
+            issues.extend(evaluation.improvement_suggestions[:3])
+
+        if issues:
+            return " / ".join(issues[:4])
+        return "사용자의 원래 질문과 토론 핵심에 더 직접 맞도록 최종 정리를 다시 작성하세요."
+
+    def _used_llm(
+        self,
+        messages: list[AgentMessage],
+        evaluation,
+        quality_checks: list[dict[str, object]],
+    ) -> bool:
+        return (
+            any(message.metadata.get("source") == "llm" for message in messages)
+            or evaluation.metadata.get("source") == "llm"
+            or any(check.get("source") == "llm" for check in quality_checks)
+        )
 
     def _latest_critique(self, messages: list[AgentMessage]) -> AgentMessage:
         for message in reversed(messages):
