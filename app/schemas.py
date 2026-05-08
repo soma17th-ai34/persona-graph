@@ -37,6 +37,7 @@ class AgentMessage(BaseModel):
         "moderator",
         "specialist",
         "debate",
+        "judge",
         "critic",
         "synthesizer",
     ]

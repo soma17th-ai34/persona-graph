@@ -97,7 +97,13 @@ class EvaluatorAgent:
         has_risk = any(keyword in final_answer for keyword in ["리스크", "위험", "주의", "대응"])
         has_next_action = any(keyword in final_answer for keyword in ["다음", "24시간", "실행 단계", "액션"])
 
-        responder_count = len({message.agent_id for message in debate_messages})
+        responder_count = len(
+            {
+                message.agent_id
+                for message in debate_messages
+                if message.stage in {"specialist", "debate"}
+            }
+        )
         response_turns = len([message for message in debate_messages if message.stage == "debate"])
 
         consistency = 5 if responder_count >= 3 and response_turns >= 3 else 4 if critique.content else 3

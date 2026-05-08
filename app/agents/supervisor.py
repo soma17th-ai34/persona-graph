@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from app.agents.critic import CriticAgent
 from app.agents.evaluator import EvaluatorAgent
+from app.agents.judge import JudgeAgent
 from app.agents.moderator import ModeratorAgent
 from app.agents.persona_generator import PersonaGenerator
 from app.agents.specialist import SpecialistAgent
@@ -19,6 +20,7 @@ class Supervisor:
         self.persona_generator = PersonaGenerator(llm)
         self.moderator = ModeratorAgent(llm)
         self.specialist = SpecialistAgent(llm)
+        self.judge = JudgeAgent(llm)
         self.critic = CriticAgent(llm)
         self.synthesizer = SynthesizerAgent(llm)
         self.evaluator = EvaluatorAgent(llm)
@@ -56,8 +58,6 @@ class Supervisor:
             specialist_messages.append(message)
             yield self._message_event(message)
 
-        discussion_messages: list[AgentMessage] = []
-
         messages: list[AgentMessage] = [persona_message, opening, *specialist_messages]
 
         for round_number in range(1, debate_rounds + 1):
@@ -65,31 +65,39 @@ class Supervisor:
             moderator_note = self.moderator.guide(
                 problem=problem,
                 personas=personas,
-                transcript=self._format_transcript([*specialist_messages, *discussion_messages]),
+                transcript=self._format_transcript(self._discussion_messages(messages)),
                 round_number=round_number,
             )
             messages.append(moderator_note)
             yield self._message_event(moderator_note)
 
+            round_messages: list[AgentMessage] = []
             for persona in personas:
+                stance = self._debate_stance(len(round_messages), round_number)
                 yield self._started_event(persona.id, persona.name, "debate", round_number)
                 response = self.specialist.respond(
                     problem=problem,
                     persona=persona,
-                    transcript=self._format_transcript([*specialist_messages, *discussion_messages]),
+                    transcript=self._format_transcript(self._discussion_messages(messages)),
                     moderator_note=moderator_note.content,
                     round_number=round_number,
+                    stance=stance,
                 )
-                discussion_messages.append(response)
+                round_messages.append(response)
                 messages.append(response)
                 yield self._message_event(response)
 
-        debate_messages = [*specialist_messages, *discussion_messages]
+            yield self._started_event("judge", "판사 에이전트", "judge", round_number)
+            judgment = self.judge.evaluate_round(problem, round_messages, round_number)
+            messages.append(judgment)
+            yield self._message_event(judgment)
+
+        debate_messages = self._discussion_messages(messages)
         yield self._started_event("critic", "비판 에이전트", "critic")
         critique = self.critic.review(problem, debate_messages)
         yield self._message_event(critique)
 
-        yield self._started_event("synthesizer", "종합 에이전트", "synthesizer")
+        yield self._started_event("moderator_summary", "사회자 에이전트", "synthesizer")
         synthesis = self.synthesizer.synthesize(problem, debate_messages, critique)
         yield self._message_event(synthesis)
 
@@ -166,7 +174,7 @@ class Supervisor:
 
         messages.extend(agent_replies)
 
-        yield self._started_event("synthesizer", "종합 에이전트", "synthesizer", round_number)
+        yield self._started_event("moderator_summary", "사회자 에이전트", "synthesizer", round_number)
         synthesis = self.synthesizer.synthesize(
             response.problem,
             self._discussion_messages(messages),
@@ -236,7 +244,7 @@ class Supervisor:
         return [
             message
             for message in messages
-            if message.stage in {"user", "specialist", "debate"}
+            if message.stage in {"user", "specialist", "debate", "judge"}
         ]
 
     def _latest_critique(self, messages: list[AgentMessage]) -> AgentMessage:
@@ -289,6 +297,9 @@ class Supervisor:
         score = len(query_terms & profile_terms) * 2
         score += sum(1 for term in query_terms if len(term) >= 2 and term in profile_text)
         return score
+
+    def _debate_stance(self, message_index: int, round_number: int) -> str:
+        return "support" if (message_index + round_number - 1) % 2 == 0 else "opposition"
 
     def _keyword_terms(self, text: str) -> set[str]:
         normalized = self._normalized_text(text)

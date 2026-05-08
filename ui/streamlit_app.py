@@ -35,6 +35,7 @@ STAGE_LABELS = {
     "moderator": "사회자 진행",
     "specialist": "전문가 의견",
     "debate": "Agent 대화",
+    "judge": "내부 평가",
     "critic": "비판",
     "synthesizer": "최종 종합",
 }
@@ -87,7 +88,7 @@ def render_app_header() -> None:
     if not os.path.exists(HERO_IMAGE_PATH):
         st.title("PersonaGraph")
         st.caption(
-            "문제를 입력하면 여러 AI 에이전트가 각자의 페르소나로 토론하고, 비판과 종합을 거쳐 최종 해결안을 만듭니다."
+            "문제를 입력하면 여러 AI 에이전트가 각자의 페르소나로 토론하고, 최종 해결안을 만듭니다."
         )
         return
 
@@ -540,12 +541,12 @@ div[data-testid="stAppViewContainer"] .main .block-container {{
   <div class="pg-hero-content">
     <div class="pg-hero-kicker">multi-agent persona debate</div>
     <h1>PersonaGraph</h1>
-    <p>문제를 입력하면 여러 AI 에이전트가 각자의 페르소나로 토론하고, 비판과 종합을 거쳐 최종 해결안을 만듭니다.</p>
+    <p>문제를 입력하면 여러 AI 에이전트가 각자의 페르소나로 토론하고, 최종 해결안을 만듭니다.</p>
     <div class="pg-flow" aria-label="PersonaGraph flow">
       <span class="pg-flow-step">문제 입력</span>
       <span class="pg-flow-step">페르소나 토론</span>
-      <span class="pg-flow-step">비판 검토</span>
-      <span class="pg-flow-step">결론 평가</span>
+      <span class="pg-flow-step">찬반 토론</span>
+      <span class="pg-flow-step">최종 요약</span>
     </div>
   </div>
 </section>
@@ -579,6 +580,8 @@ def render_response(
         selected_agent_id = render_agent_network(response.personas, selected_agent_id, view_key)
         render_selected_agent_info(response.personas, selected_agent_id)
 
+    render_final_result(response)
+
     st.divider()
     if max_reply_agents is not None:
         render_discussion_input(
@@ -600,6 +603,21 @@ def render_topic_context(response: SolveResponse) -> None:
 """,
         unsafe_allow_html=True,
     )
+
+
+def render_final_result(response: SolveResponse) -> None:
+    st.markdown("#### MOD 최종 정리")
+    with st.container(border=True):
+        st.markdown(
+            """
+<div class="pg-speaker-line">
+  <span class="pg-speaker-chip">MOD</span>
+  <span class="pg-round-meta">사회자 최종 정리</span>
+</div>
+""",
+            unsafe_allow_html=True,
+        )
+        render_final_result_content(response.final_answer)
 
 
 def render_conversation_room(response: SolveResponse) -> None:
@@ -632,7 +650,7 @@ def conversation_room_messages(messages) -> list:
     return [
         message
         for message in messages
-        if message.stage != "persona_generation"
+        if message.stage not in {"persona_generation", "judge", "critic", "synthesizer"}
     ]
 
 
@@ -873,8 +891,14 @@ def chat_stage_label(message) -> str:
         return "Agent 답변"
     if message.stage == "synthesizer" and message.metadata.get("phase") == "followup_synthesis":
         return "중간 정리"
+    if message.stage == "debate" and message.metadata.get("stance") == "support":
+        return "찬성 토론"
+    if message.stage == "debate" and message.metadata.get("stance") == "opposition":
+        return "반대 토론"
     if message.stage == "debate":
         return "Agent 대화"
+    if message.stage == "judge":
+        return "내부 평가"
     if message.stage == "user":
         return "내 의견"
     return STAGE_LABELS.get(message.stage, message.stage)
@@ -894,6 +918,8 @@ def message_role_line(message) -> str:
         return ""
     if message.stage == "synthesizer":
         return "현재까지의 흐름을 반영한 정리"
+    if message.stage == "judge":
+        return "라운드별 내부 판단 기준"
     if not message.role:
         return ""
     return f"관점 · {trim_summary(message.role, 80)}"
@@ -903,7 +929,7 @@ def render_supporting_logs(messages) -> None:
     log_messages = [
         message
         for message in messages
-        if message.stage in {"persona_generation", "moderator", "critic"}
+        if message.stage in {"persona_generation", "moderator"}
     ]
     if not log_messages:
         return
@@ -935,6 +961,8 @@ def message_section_label(message) -> str:
         return f"{round_value}라운드 중간 종합" if round_value else "중간 종합"
     if message.stage in {"moderator", "debate"} and message.metadata.get("round"):
         return f"{message.metadata['round']}라운드 Agent 대화"
+    if message.stage == "judge" and message.metadata.get("round"):
+        return f"{message.metadata['round']}라운드 내부 평가"
     if message.stage == "critic":
         return "비판 검토"
     if message.stage == "synthesizer":
@@ -955,6 +983,7 @@ def message_avatar_text(message) -> str:
         "persona_generation": "PG",
         "user": "나",
         "moderator": "MOD",
+        "judge": "REV",
         "critic": "CR",
         "synthesizer": "FIN",
     }.get(message.stage, message.agent_name[:2].upper())
@@ -1036,6 +1065,26 @@ def render_message_content(content: str) -> None:
     st.markdown(safe_content, unsafe_allow_html=True)
 
 
+def render_final_result_content(content: str) -> None:
+    safe_content = html.escape(normalize_display_markdown(content))
+    safe_content = safe_content.replace("\n", "<br>")
+    safe_content = re.sub(
+        r"(^|<br>)(\d+[.)]\s+[^<]+)",
+        r"\1<strong>\2</strong>",
+        safe_content,
+    )
+    st.markdown(f"<div>{safe_content}</div>", unsafe_allow_html=True)
+
+
+def normalize_display_markdown(content: str) -> str:
+    lines = []
+    for line in content.splitlines():
+        cleaned = re.sub(r"^\s{0,3}#{1,6}\s+", "", line)
+        cleaned = re.sub(r"\*\*([^*]+?)\*\*", r"\1", cleaned)
+        lines.append(cleaned.rstrip())
+    return "\n".join(lines).strip()
+
+
 def consume_live_stream(events, initial_personas=None) -> SolveResponse | None:
     live_messages = []
     live_personas = list(initial_personas or [])
@@ -1050,10 +1099,16 @@ def consume_live_stream(events, initial_personas=None) -> SolveResponse | None:
             live_personas = list(event.get("personas", []))
             active_event = None
         elif event_type == "agent_started":
+            if event.get("stage") in {"judge", "critic", "synthesizer"}:
+                active_event = None
+                continue
             active_event = event
         elif event_type == "agent_message":
             message = event.get("message")
             if message is not None:
+                if message.stage in {"judge", "critic", "synthesizer"}:
+                    active_event = None
+                    continue
                 if message.stage != "persona_generation":
                     for frame in live_message_frames(message.content):
                         preview_message_model = message.model_copy(
@@ -1307,6 +1362,7 @@ def agent_avatar_text(agent_id: str, agent_name: str, stage: str) -> str:
     return {
         "persona_generator": "PG",
         "moderator": "MOD",
+        "judge": "REV",
         "critic": "CR",
         "synthesizer": "FIN",
         "evaluator": "EV",
