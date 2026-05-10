@@ -64,28 +64,32 @@ class Supervisor:
         messages: list[AgentMessage] = [persona_message, opening, *specialist_messages]
 
         for round_number in range(1, debate_rounds + 1):
+            round_context = [*specialist_messages, *discussion_messages]
+            round_transcript = self._format_transcript(round_context)
             yield self._started_event("moderator", "사회자 에이전트", "moderator", round_number)
             moderator_note = self.moderator.guide(
                 problem=problem,
                 personas=personas,
-                transcript=self._format_transcript([*specialist_messages, *discussion_messages]),
+                transcript=round_transcript,
                 round_number=round_number,
             )
             messages.append(moderator_note)
             yield self._message_event(moderator_note)
 
+            round_messages: list[AgentMessage] = []
             for persona in personas:
                 yield self._started_event(persona.id, persona.name, "debate", round_number)
                 response = self.specialist.respond(
                     problem=problem,
                     persona=persona,
-                    transcript=self._format_transcript([*specialist_messages, *discussion_messages]),
+                    transcript=round_transcript,
                     moderator_note=moderator_note.content,
                     round_number=round_number,
                 )
-                discussion_messages.append(response)
+                round_messages.append(response)
                 messages.append(response)
                 yield self._message_event(response)
+            discussion_messages.extend(round_messages)
 
         debate_messages = [*specialist_messages, *discussion_messages]
         yield self._started_event("critic", "비판 에이전트", "critic")
@@ -157,13 +161,14 @@ class Supervisor:
         yield self._message_event(user_message)
 
         messages = [*response.messages, user_message]
+        round_transcript = self._format_transcript(messages)
         agent_replies: list[AgentMessage] = []
         for persona in selected_personas:
             yield self._started_event(persona.id, persona.name, "debate", round_number)
             reply = self.specialist.reply_to_user(
                 problem=response.problem,
                 persona=persona,
-                transcript=self._format_transcript(messages + agent_replies),
+                transcript=round_transcript,
                 user_content=user_content,
                 round_number=round_number,
             )
@@ -287,12 +292,13 @@ class Supervisor:
         messages.append(moderator_note)
         yield self._message_event(moderator_note)
 
+        round_transcript = self._format_transcript(self._discussion_messages(messages))
         for persona in personas:
             yield self._started_event(persona.id, persona.name, "debate", round_number)
             response = self.specialist.respond(
                 problem=problem,
                 persona=persona,
-                transcript=self._format_transcript(self._discussion_messages(messages)),
+                transcript=round_transcript,
                 moderator_note=moderator_note.content,
                 round_number=round_number,
             )

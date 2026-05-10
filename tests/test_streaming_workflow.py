@@ -1,10 +1,11 @@
 import unittest
 
 from app.agents.evaluator import EvaluatorAgent
+from app.agents.moderator import ModeratorAgent
 from app.agents.specialist import SpecialistAgent
 from app.agents.supervisor import Supervisor
 from app.llm import LLMClient, LLMResult
-from app.schemas import AgentMessage, Evaluation, Persona
+from app.schemas import AgentMessage, Evaluation, Persona, SolveResponse
 from app.workflow import continue_discussion_stream, solve_problem_stream
 
 
@@ -70,6 +71,63 @@ class ExtraRoundEvaluator:
         }
 
 
+class TranscriptRecordingSpecialist:
+    def __init__(self):
+        self.respond_transcripts = []
+        self.reply_transcripts = []
+
+    def answer(self, problem: str, persona: Persona) -> AgentMessage:
+        return AgentMessage(
+            stage="specialist",
+            agent_id=persona.id,
+            agent_name=persona.name,
+            role=persona.role,
+            content=f"initial {persona.id}",
+            metadata={"source": "test"},
+        )
+
+    def respond(
+        self,
+        problem: str,
+        persona: Persona,
+        transcript: str,
+        moderator_note: str,
+        round_number: int,
+    ) -> AgentMessage:
+        self.respond_transcripts.append((persona.id, round_number, transcript))
+        return AgentMessage(
+            stage="debate",
+            agent_id=persona.id,
+            agent_name=persona.name,
+            role=persona.role,
+            content=f"debate {persona.id} round {round_number}",
+            metadata={"source": "test", "round": round_number},
+        )
+
+    def reply_to_user(
+        self,
+        problem: str,
+        persona: Persona,
+        transcript: str,
+        user_content: str,
+        round_number: int,
+    ) -> AgentMessage:
+        self.reply_transcripts.append((persona.id, round_number, transcript))
+        return AgentMessage(
+            stage="debate",
+            agent_id=persona.id,
+            agent_name=persona.name,
+            role=persona.role,
+            content=f"reply {persona.id} round {round_number}",
+            metadata={
+                "source": "test",
+                "round": round_number,
+                "phase": "user_response",
+                "responds_to": "user",
+            },
+        )
+
+
 class StreamingWorkflowTest(unittest.TestCase):
     def test_solve_stream_emits_messages_and_final_response(self):
         events = list(
@@ -109,6 +167,36 @@ class StreamingWorkflowTest(unittest.TestCase):
         self.assertTrue(all(not line[:2].replace(".", "").isdigit() for line in final_lines))
         self.assertNotIn("**", final_answer)
 
+    def test_moderator_strips_markdown_from_llm_output(self):
+        llm = FakeLLM(
+            [
+                LLMResult(
+                    content="""### 핵심 진행
+1. **하늘**은 먼저 기준을 좁혀주세요.
+- `노리`는 앞선 발언에 바로 반응해주세요.""",
+                    used_llm=True,
+                )
+            ]
+        )
+        moderator = ModeratorAgent(llm)
+        personas = [
+            Persona(
+                id="demo",
+                name="하늘",
+                role="발표 흐름을 설계하는 역할",
+                perspective="청중이 바로 이해할 수 있는 장면을 중시합니다.",
+                priority_questions=["첫 화면에서 무엇을 보여줄 것인가?"],
+            )
+        ]
+
+        message = moderator.open("데모 흐름을 정해야 한다.", personas)
+
+        self.assertNotIn("###", message.content)
+        self.assertNotIn("**", message.content)
+        self.assertNotIn("`", message.content)
+        self.assertFalse(any(line.startswith(("1.", "- ")) for line in message.content.splitlines()))
+        self.assertIn("하늘은 먼저 기준을 좁혀주세요.", message.content)
+
     def test_continue_stream_starts_with_user_message(self):
         initial_events = list(
             solve_problem_stream(
@@ -133,6 +221,113 @@ class StreamingWorkflowTest(unittest.TestCase):
         self.assertEqual("agent_message", events[0]["type"])
         self.assertEqual("user", first_message.stage)
         self.assertEqual("final_response", events[-1]["type"])
+
+    def test_debate_round_context_updates_only_after_round_ends(self):
+        supervisor = Supervisor(LLMClient(enabled=False))
+        specialist = TranscriptRecordingSpecialist()
+        supervisor.specialist = specialist
+
+        list(
+            supervisor.solve_stream(
+                problem="라운드 컨텍스트 업데이트 방식을 확인한다.",
+                persona_count=3,
+                debate_rounds=2,
+            )
+        )
+
+        round_one = [
+            transcript
+            for _, round_number, transcript in specialist.respond_transcripts
+            if round_number == 1
+        ]
+        round_two = [
+            transcript
+            for _, round_number, transcript in specialist.respond_transcripts
+            if round_number == 2
+        ]
+
+        self.assertEqual(3, len(round_one))
+        self.assertEqual(3, len(round_two))
+        self.assertEqual(1, len(set(round_one)))
+        self.assertEqual(1, len(set(round_two)))
+        self.assertNotIn("debate product_strategist round 1", round_one[0])
+        self.assertIn("debate product_strategist round 1", round_two[0])
+        self.assertIn("debate systems_engineer round 1", round_two[0])
+        self.assertIn("debate ai_researcher round 1", round_two[0])
+        self.assertNotIn("debate product_strategist round 2", round_two[0])
+
+    def test_followup_context_updates_only_after_reply_round_ends(self):
+        personas = [
+            Persona(
+                id="demo",
+                name="데모 설계자",
+                role="발표 흐름을 설계하는 역할",
+                perspective="청중이 바로 이해할 수 있는 발표 임팩트를 중시합니다.",
+                priority_questions=["첫 화면에서 무엇을 보여줄 것인가?"],
+            ),
+            Persona(
+                id="budget",
+                name="예산 관리자",
+                role="비용과 구매 우선순위를 조정하는 역할",
+                perspective="예산, 부품 비용, 지출 순서를 먼저 좁힙니다.",
+                priority_questions=["얼마까지 쓸 수 있는가?"],
+            ),
+            Persona(
+                id="risk",
+                name="리스크 분석가",
+                role="실패 조건과 안전 범위를 점검하는 역할",
+                perspective="위험, 일정, 실패 가능성을 먼저 봅니다.",
+                priority_questions=["어디서 실패할 수 있는가?"],
+            ),
+        ]
+        response = self._response_for_followup_context_test(personas)
+        supervisor = Supervisor(LLMClient(enabled=False))
+        specialist = TranscriptRecordingSpecialist()
+        supervisor.specialist = specialist
+
+        list(
+            supervisor.continue_discussion_stream(
+                response=response,
+                user_content="발표 임팩트를 우선하고 싶다.",
+                max_agents=3,
+            )
+        )
+
+        transcripts = [transcript for _, _, transcript in specialist.reply_transcripts]
+
+        self.assertEqual(3, len(transcripts))
+        self.assertEqual(1, len(set(transcripts)))
+        self.assertIn("previous debate", transcripts[0])
+        self.assertIn("발표 임팩트를 우선하고 싶다.", transcripts[0])
+        self.assertNotIn("reply demo round 2", transcripts[0])
+        self.assertNotIn("reply budget round 2", transcripts[0])
+
+    def _response_for_followup_context_test(self, personas: list[Persona]) -> SolveResponse:
+        return SolveResponse(
+            run_id="20260510-000000-00000000",
+            problem="후속 라운드 컨텍스트를 확인한다.",
+            personas=personas,
+            messages=[
+                AgentMessage(
+                    stage="debate",
+                    agent_id="demo",
+                    agent_name="데모 설계자",
+                    role="발표 흐름을 설계하는 역할",
+                    content="previous debate",
+                    metadata={"source": "test", "round": 1},
+                )
+            ],
+            final_answer="previous final",
+            evaluation=Evaluation(
+                consistency=5,
+                specificity=5,
+                risk_awareness=5,
+                feasibility=5,
+                overall_comment="테스트 응답입니다.",
+            ),
+            used_llm=False,
+            model="test",
+        )
 
     def test_specialist_refines_until_self_verification_passes(self):
         llm = FakeLLM(
@@ -163,6 +358,102 @@ class StreamingWorkflowTest(unittest.TestCase):
         self.assertEqual(5, verification["score"])
         self.assertTrue(verification["passed"])
         self.assertIn("기준 미달 이유", llm.calls[2]["user_prompt"])
+
+    def test_specialist_prompt_varies_opening_rhythm_by_persona(self):
+        llm = FakeLLM(
+            [
+                LLMResult(content="첫 사용자를 기준으로 범위를 줄이는 편이 좋습니다. 바로 검증할 장면이 선명해집니다.", used_llm=True),
+                LLMResult(content='{"score": 5, "issue": ""}', used_llm=True),
+                LLMResult(content="구현 위험을 먼저 줄이는 편이 안전합니다. 작은 흐름부터 끝까지 확인해야 합니다.", used_llm=True),
+                LLMResult(content='{"score": 5, "issue": ""}', used_llm=True),
+            ]
+        )
+        specialist = SpecialistAgent(llm)
+        first = Persona(
+            id="product_strategist",
+            name="제품 전략가",
+            role="MVP 범위를 정리하는 역할",
+            perspective="작은 데모로 가치를 증명합니다.",
+            priority_questions=["첫 사용자는 누구인가?"],
+        )
+        second = Persona(
+            id="systems_engineer",
+            name="시스템 엔지니어",
+            role="아키텍처 안정성을 검토하는 역할",
+            perspective="실패 지점을 먼저 봅니다.",
+            priority_questions=["어디서 실패하는가?"],
+        )
+
+        specialist.answer("3주 안에 AI MVP를 만들어야 한다.", first)
+        specialist.answer("3주 안에 AI MVP를 만들어야 한다.", second)
+
+        first_prompt = llm.calls[0]["user_prompt"]
+        second_prompt = llm.calls[2]["user_prompt"]
+
+        self.assertIn("첫 문장 리듬:", first_prompt)
+        self.assertIn("첫 문장 리듬:", second_prompt)
+        self.assertIn(SpecialistAgent.REPEATED_OPENERS, first_prompt)
+        self.assertNotIn("예:", first_prompt)
+        self.assertNotIn("예:", second_prompt)
+        self.assertIn("그대로 복사하지 말고", first_prompt)
+        self.assertNotEqual(
+            specialist._opening_guide(first),
+            specialist._opening_guide(second),
+        )
+
+    def test_specialist_fallback_openings_avoid_repeated_demo_phrases(self):
+        specialist = SpecialistAgent(LLMClient(enabled=False))
+        personas = [
+            Persona(
+                id="product_strategist",
+                name="제품 전략가",
+                role="MVP 범위를 정리하는 역할",
+                perspective="작은 데모로 가치를 증명합니다.",
+                priority_questions=["첫 사용자는 누구인가?"],
+            ),
+            Persona(
+                id="systems_engineer",
+                name="시스템 엔지니어",
+                role="아키텍처 안정성을 검토하는 역할",
+                perspective="실패 지점을 먼저 봅니다.",
+                priority_questions=["어디서 실패하는가?"],
+            ),
+            Persona(
+                id="risk_guardian",
+                name="리스크 관리자",
+                role="위험과 실패 조건을 점검하는 역할",
+                perspective="시연 중 깨질 수 있는 조건을 먼저 봅니다.",
+                priority_questions=["무엇이 깨질 수 있는가?"],
+            ),
+            Persona(
+                id="demo_director",
+                name="데모 연출가",
+                role="발표와 데모 흐름을 조율하는 역할",
+                perspective="청중이 바로 이해할 장면을 중시합니다.",
+                priority_questions=["어떤 장면을 먼저 보여줄 것인가?"],
+            ),
+            Persona(
+                id="ai_researcher",
+                name="AI 검증가",
+                role="평가 기준과 품질을 확인하는 역할",
+                perspective="답변 품질과 검증 가능성을 봅니다.",
+                priority_questions=["어떻게 검증할 것인가?"],
+            ),
+        ]
+        forbidden_openers = (
+            "지금은",
+            "완성도보다",
+            "기능을 줄이는 쪽",
+            "성공 기준은",
+            "가장 큰 위험은",
+        )
+
+        openings = [
+            specialist._fallback_opening(persona, persona.priority_questions[0])
+            for persona in personas
+        ]
+
+        self.assertTrue(all(not opening.startswith(forbidden_openers) for opening in openings))
 
     def test_evaluator_reverse_verification_parses_llm_feedback(self):
         llm = FakeLLM(

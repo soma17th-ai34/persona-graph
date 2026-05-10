@@ -7,6 +7,14 @@ from app.schemas import AgentMessage, Persona
 class SpecialistAgent:
     SELF_VERIFICATION_THRESHOLD = 4
     SELF_VERIFICATION_MAX_ATTEMPTS = 3
+    OPENING_GUIDES = [
+        "핵심 대상이나 산출물을 주어로 삼아 바로 판단하세요.",
+        "바로 해야 할 행동을 동사 중심으로 말하세요.",
+        "실패 조건이나 제약을 주어로 삼아 우려를 말하세요.",
+        "두 선택지를 비교하되 고정된 표현을 반복하지 말고 직접 문장을 만드세요.",
+        "검증 기준이나 통과 조건을 주어로 삼아 판단하세요.",
+    ]
+    REPEATED_OPENERS = '"지금은", "이건", "먼저", "좋아요", "동의합니다", "제 생각에는", "완성도보다", "기능을 줄이는 쪽", "성공 기준은", "가장 큰 위험은"'
 
     def __init__(self, llm: LLMClient):
         self.llm = llm
@@ -30,6 +38,9 @@ class SpecialistAgent:
 - 번호 목록이나 "핵심 판단/근거/실행 제안" 같은 보고서 제목을 쓰지 마세요.
 - 자기 관점에서 중요한 이유와 바로 해볼 수 있는 제안을 자연스럽게 이어 말하세요.
 - 다른 Agent에게 넘기는 질문으로 끝낼 필요는 없습니다.
+- 첫 문장 리듬: {self._opening_guide(persona)}
+- 여러 Agent가 같은 말로 시작하지 않도록 {self.REPEATED_OPENERS}로 시작하지 마세요.
+- 위 리듬 안내의 단어나 표현을 그대로 복사하지 말고, {persona.name}의 역할에 맞는 다른 첫 단어로 시작하세요.
 - 3~5문장으로 짧고 구체적으로 작성하세요.
 """
         completion = self._complete_with_self_verification(
@@ -81,6 +92,9 @@ class SpecialistAgent:
 - 첫 문장은 바로 자신의 판단이나 보완점으로 시작하세요.
 - 다른 Agent 이름은 꼭 필요할 때만 자연스럽게 언급하세요.
 - "동의합니다", "좋습니다", "~님 말처럼" 같은 시작을 반복하지 마세요.
+- 첫 문장 리듬: {self._opening_guide(persona)}
+- 여러 Agent가 같은 말로 시작하지 않도록 {self.REPEATED_OPENERS}로 시작하지 마세요.
+- 위 리듬 안내의 단어나 표현을 그대로 복사하지 말고, {persona.name}의 역할에 맞는 다른 첫 단어로 시작하세요.
 - 질문으로 끝내야 한다는 규칙은 없습니다. 필요한 경우에만 짧게 물어보세요.
 - 2~4문장으로, 실제 단체 대화방에서 말하듯 작성하세요.
 """
@@ -136,6 +150,9 @@ class SpecialistAgent:
 - 첫 문장에 추천, 우려, 보완점 중 하나를 분명히 말하세요.
 - 이전 Agent의 주장은 꼭 필요할 때만 짧게 연결하세요.
 - "좋습니다. 지금 질문은..." 같은 상담원식 시작을 피하세요.
+- 첫 문장 리듬: {self._opening_guide(persona)}
+- 여러 Agent가 같은 말로 시작하지 않도록 {self.REPEATED_OPENERS}로 시작하지 마세요.
+- 위 리듬 안내의 단어나 표현을 그대로 복사하지 말고, {persona.name}의 역할에 맞는 다른 첫 단어로 시작하세요.
 - 마지막은 질문보다 다음 행동이나 판단 기준으로 끝내는 편을 우선하세요.
 - 2~4문장으로, 단체 대화방에서 말하듯 작성하세요.
 """
@@ -283,21 +300,71 @@ class SpecialistAgent:
             return 5
         return score
 
+    def _opening_guide(self, persona: Persona) -> str:
+        index = self._opening_index(persona)
+        return self.OPENING_GUIDES[index]
+
     def _fallback(self, problem: str, persona: Persona) -> str:
         first_question = persona.priority_questions[0] if persona.priority_questions else "가장 먼저 검증할 기준을 정해야 합니다."
-        return f"""{persona.name} 입장에서는 "{first_question}"부터 확인하고 싶습니다.
+        return f"""{self._fallback_opening(persona, first_question)}
 이 문제는 '{persona.perspective}' 쪽으로 좁힐수록 2주 안에 보여줄 수 있는 결과가 선명해집니다.
 범위가 넓어질수록 구현보다 조율 비용이 커지기 때문에, 한 번의 입력에서 관점 제시와 비판, 종합이 끝까지 이어지는지 먼저 확인해야 합니다.
 초기 MVP에서는 자동화 범위를 늘리기보다 로그 품질, 재현성, 실패 시 폴백을 우선하는 편이 안전합니다."""
 
     def _response_fallback(self, persona: Persona, round_number: int) -> str:
         first_question = persona.priority_questions[0] if persona.priority_questions else "실행 기준"
-        return f"""{persona.name} 쪽에서는 지금 먼저 확인할 기준을 "{first_question}"로 잡는 게 좋아 보입니다.
+        return f"""{self._fallback_opening(persona, first_question)}
 "{persona.perspective}" 기준이 빠지면 결론이 좋아 보여도 실제 선택으로 이어지기 어렵습니다.
 이번 라운드에서는 범위, 성공 기준, 데모 실패 시 대안 중 하나를 먼저 고정하면 다음 판단이 훨씬 쉬워집니다."""
 
     def _user_reply_fallback(self, persona: Persona, user_content: str, round_number: int) -> str:
         first_question = persona.priority_questions[0] if persona.priority_questions else "우선순위"
-        return f"""그 의견을 넣는다면 먼저 "{first_question}" 기준으로 기능 후보를 걸러보는 게 좋겠습니다.
+        return f"""{self._fallback_opening(persona, first_question)}
 {persona.name} 관점에서는 "{user_content}"가 실제 결정으로 이어지려면 남길 범위와 버릴 범위가 같이 정해져야 합니다.
 다음 판단 기준은 이 의견을 넣었을 때 데모 안정성, 구현 난이도, 설득력이 함께 좋아지는지입니다."""
+
+    def _fallback_opening(self, persona: Persona, first_question: str) -> str:
+        index = self._opening_index(persona)
+        templates = [
+            f'"{first_question}"를 먼저 고정해야 {persona.name}의 판단이 흔들리지 않습니다.',
+            f'범위 축소는 {persona.name} 관점에서 "{first_question}"부터 시작하는 편이 안전합니다.',
+            f'"{first_question}"를 미루면 {persona.name} 관점의 실패 가능성이 커집니다.',
+            f'{persona.name}에게 더 중요한 선택은 "{first_question}"를 먼저 고정하는 것입니다.',
+            f'검증 통과선은 {persona.name} 관점에서 "{first_question}"에 답할 만큼 범위를 줄이는 것입니다.',
+        ]
+        return templates[index]
+
+    def _opening_index(self, persona: Persona) -> int:
+        core_identity = " ".join([persona.id, persona.name, persona.role]).lower()
+        core_rules = [
+            (0, ("product", "제품", "기획", "사용자")),
+            (1, ("system", "engineer", "시스템", "개발", "실행설계")),
+            (4, ("ai", "research", "연구", "검증", "평가")),
+            (3, ("demo", "director", "발표", "데모", "조율")),
+            (2, ("risk", "safety", "리스크", "위험", "안전", "범위지킴")),
+        ]
+        for index, keywords in core_rules:
+            if any(keyword in core_identity for keyword in keywords):
+                return index
+
+        identity = " ".join(
+            [
+                persona.id,
+                persona.name,
+                persona.role,
+                persona.perspective,
+                " ".join(persona.priority_questions),
+            ]
+        ).lower()
+        keyword_rules = [
+            (1, ("system", "engineer", "developer", "개발", "구현", "설계", "실행")),
+            (0, ("product", "user", "사용자", "제품", "기획", "가치")),
+            (2, ("risk", "safety", "리스크", "위험", "안전", "범위")),
+            (3, ("demo", "director", "발표", "데모", "조율", "일정")),
+            (4, ("ai", "research", "quality", "eval", "검증", "평가", "품질", "테스트")),
+        ]
+        for index, keywords in keyword_rules:
+            if any(keyword in identity for keyword in keywords):
+                return index
+        weighted = sum((index + 1) * ord(char) for index, char in enumerate(persona.id))
+        return weighted % len(self.OPENING_GUIDES)

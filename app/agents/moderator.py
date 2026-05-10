@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from app.llm import LLMClient
 from app.schemas import AgentMessage, Persona
 
@@ -19,12 +21,11 @@ class ModeratorAgent:
 
 사회자로서 토론을 시작하세요.
 반드시 자연스러운 한국어로 작성하고, 고유명사나 기술 약어 외에는 영어를 최소화하세요.
-다음 내용을 포함하세요.
-1. 오늘 다룰 핵심 쟁점
-2. 각 에이전트가 어떤 순서와 태도로 말하면 좋은지
-3. 이후 라운드에서는 앞선 발언에 직접 반응해야 한다는 규칙
+아래 내용을 자연스러운 문장 안에 포함하세요.
+오늘 다룰 핵심 쟁점, 각 에이전트가 어떤 순서와 태도로 말하면 좋은지, 이후 라운드에서는 앞선 발언에 직접 반응해야 한다는 규칙
 
 짧고 대화 진행자처럼 작성하세요.
+마크다운 제목, 번호 목록, 불릿, 굵게 표시를 쓰지 말고 문장형으로만 작성하세요.
 """
         result = self.llm.complete(
             system_prompt="당신은 한국어 다중 에이전트 토론을 진행하는 사회자입니다. 토론을 생생하고 질서 있게 이끄세요.",
@@ -70,6 +71,7 @@ class ModeratorAgent:
 - 새 주제를 늘리기보다 충돌과 빈틈을 좁히게 하세요.
 - "누구의 어떤 주장에 반응할지"가 드러나게 하세요.
 - 3~5문장으로 작성하세요.
+- 마크다운 제목, 번호 목록, 불릿, 굵게 표시를 쓰지 말고 문장형으로만 작성하세요.
 """
         result = self.llm.complete(
             system_prompt="당신은 한국어 다중 에이전트 토론의 사회자입니다. 발언 사이의 연결을 만들고 논점을 좁히세요.",
@@ -102,9 +104,28 @@ class ModeratorAgent:
             agent_id="moderator",
             agent_name="사회자 에이전트",
             role=role,
-            content=content,
+            content=self._clean_plain_text(content),
             metadata={"source": result_source, "error": error, **metadata},
         )
+
+    def _clean_plain_text(self, content: str) -> str:
+        lines = []
+        for line in content.splitlines():
+            cleaned = self._strip_markdown(line)
+            if cleaned:
+                lines.append(cleaned)
+        return "\n".join(lines).strip()
+
+    def _strip_markdown(self, line: str) -> str:
+        cleaned = line.strip()
+        cleaned = cleaned.replace("**", "")
+        cleaned = cleaned.replace("__", "")
+        cleaned = cleaned.replace("`", "")
+        cleaned = re.sub(r"^#{1,6}\s*", "", cleaned)
+        cleaned = re.sub(r"^>\s*", "", cleaned)
+        cleaned = re.sub(r"^[-*+]\s+", "", cleaned)
+        cleaned = re.sub(r"^\d+[.)]\s*", "", cleaned)
+        return cleaned.strip()
 
     def _persona_panel(self, personas: list[Persona]) -> str:
         return "\n".join(

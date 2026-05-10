@@ -7,6 +7,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from app.schemas import RunSummary, SolveResponse
+from app.terminal_logging import terminal_log
 
 
 RUN_ID_PATTERN = re.compile(r"^[0-9]{8}-[0-9]{6}-[a-f0-9]{8}$")
@@ -26,9 +27,21 @@ def save_run(response: SolveResponse) -> SolveResponse:
     run_id = response.run_id or _make_run_id(response)
     stored = response.model_copy(update={"run_id": run_id})
     path = directory / f"{run_id}.json"
-    path.write_text(
-        json.dumps(stored.model_dump(mode="json"), ensure_ascii=False, indent=2),
-        encoding="utf-8",
+    terminal_log(
+        "run_save_start",
+        run_id=run_id,
+        messages=len(stored.messages),
+        path=str(path),
+    )
+    payload = json.dumps(stored.model_dump(mode="json"), ensure_ascii=False, indent=2)
+    terminal_log("run_save_serialized", run_id=run_id, bytes=len(payload.encode("utf-8")))
+    path.write_text(payload, encoding="utf-8")
+    terminal_log(
+        "run_saved",
+        run_id=run_id,
+        messages=len(stored.messages),
+        bytes=path.stat().st_size,
+        path=str(path),
     )
     return stored
 
