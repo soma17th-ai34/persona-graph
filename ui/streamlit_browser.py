@@ -3,17 +3,18 @@ from __future__ import annotations
 import streamlit.components.v1 as components
 
 
-def scroll_chat_to_bottom() -> None:
+def scroll_chat_to_bottom(smooth: bool = True) -> None:
+    behavior = "smooth" if smooth else "auto"
     components.html(
         """
 <script>
 const root = window.parent.document;
 const anchor = root.getElementById("pg-chat-bottom");
 if (anchor) {
-  anchor.scrollIntoView({ block: "end", behavior: "smooth" });
+  anchor.scrollIntoView({ block: "end", behavior: "__PG_SCROLL_BEHAVIOR__" });
 }
 </script>
-""",
+""".replace("__PG_SCROLL_BEHAVIOR__", behavior),
         height=0,
         width=0,
     )
