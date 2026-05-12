@@ -19,7 +19,8 @@ class SpecialistAgent:
     def __init__(self, llm: LLMClient):
         self.llm = llm
 
-    def answer(self, problem: str, persona: Persona) -> AgentMessage:
+    def answer(self, problem: str, persona: Persona, search_context: str | None = None) -> AgentMessage:
+        context_block = f"\n참고 자료 (직접 인용하거나 나열하지 말고, 페르소나 관점에서 자연스럽게 녹여서 말하세요):\n{search_context}\n" if search_context else ""
         prompt = f"""
 문제:
 {problem}
@@ -29,7 +30,7 @@ class SpecialistAgent:
 - 역할: {persona.role}
 - 관점: {persona.perspective}
 - 핵심 질문: {", ".join(persona.priority_questions)}
-
+{context_block}
 이 페르소나의 관점에서 실용적인 의견을 작성하세요.
 반드시 자연스러운 한국어로 작성하고, 고유명사나 기술 약어 외에는 영어를 최소화하세요.
 단체 대화방의 첫 발언처럼 작성하세요.
@@ -126,7 +127,9 @@ class SpecialistAgent:
         transcript: str,
         user_content: str,
         round_number: int,
+        search_context: str | None = None,
     ) -> AgentMessage:
+        context_block = f"\n참고 자료 (직접 인용하거나 나열하지 말고, 페르소나 관점에서 자연스럽게 녹여서 말하세요):\n{search_context}\n" if search_context else ""
         prompt = f"""
 문제:
 {problem}
@@ -136,7 +139,7 @@ class SpecialistAgent:
 - 역할: {persona.role}
 - 관점: {persona.perspective}
 - 핵심 질문: {", ".join(persona.priority_questions)}
-
+{context_block}
 지금까지의 대화:
 {transcript}
 
