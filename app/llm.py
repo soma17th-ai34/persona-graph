@@ -7,7 +7,7 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-DEFAULT_MODEL = "gpt-5.4-mini"
+from app.model_catalog import DEFAULT_MODEL, resolve_model_route
 
 
 @dataclass
@@ -22,10 +22,14 @@ class LLMClient:
 
     def __init__(self, model: str | None = None, temperature: float = 0.35, enabled: bool = True):
         load_dotenv()
-        self.model = model or os.getenv("PERSONA_GRAPH_MODEL", DEFAULT_MODEL)
+        route = resolve_model_route(model)
+        self.model = route.id
+        self.api_model = route.model
+        self.provider = route.provider.id
         self.temperature = temperature
-        self.api_key = os.getenv("OPENAI_API_KEY")
-        self.base_url = os.getenv("OPENAI_BASE_URL")
+        self.api_key_env = route.provider.api_key_env
+        self.api_key = os.getenv(route.provider.api_key_env)
+        self.base_url = os.getenv(route.provider.base_url_env) or route.provider.default_base_url
         self.timeout = float(os.getenv("PERSONA_GRAPH_TIMEOUT", "20"))
         self.enabled = enabled and bool(self.api_key)
         self._client = None
@@ -49,7 +53,7 @@ class LLMClient:
         if self._init_error:
             return self._init_error
         if not self.api_key:
-            return "OPENAI_API_KEY is not set."
+            return f"{self.api_key_env} is not set."
         return "LLM client is disabled."
 
     def complete(self, system_prompt: str, user_prompt: str, temperature: float | None = None) -> LLMResult:
@@ -58,7 +62,7 @@ class LLMClient:
 
         try:
             response = self._client.chat.completions.create(
-                model=self.model,
+                model=self.api_model,
                 temperature=self.temperature if temperature is None else temperature,
                 messages=[
                     {"role": "system", "content": system_prompt},

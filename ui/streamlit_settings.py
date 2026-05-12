@@ -8,6 +8,7 @@ import streamlit as st
 from ui.streamlit_browser import install_config_start_hide
 from ui.streamlit_chat import render_pending_problem_thread
 from ui.streamlit_common import trim_summary
+from ui.api_client import PersonaGraphAPIError, api_base_url, load_model_catalog
 from ui.streamlit_state import default_chat_settings
 
 
@@ -73,11 +74,19 @@ def render_settings_controls(prefix: str) -> dict:
             value=bool(current.get("use_llm", True)),
             key=f"{prefix}_use_llm",
         )
-        model = st.text_input(
-            "모델명",
-            value=str(current.get("model") or os.getenv("PERSONA_GRAPH_MODEL", "gpt-5.4-mini")),
+        model_ids, model_labels, default_model, model_warning = available_models_for_ui()
+        current_model = str(current.get("model") or default_model).strip() or default_model
+        if current_model not in model_ids:
+            current_model = default_model
+        model = st.selectbox(
+            "모델",
+            options=model_ids,
+            index=model_ids.index(current_model),
+            format_func=lambda model_id: model_labels.get(model_id, model_id),
             key=f"{prefix}_model",
         )
+        if model_warning:
+            st.warning("모델 목록을 불러오지 못해 기본 모델만 표시합니다.")
         temperature = st.slider(
             "답변 변동성",
             min_value=0.0,
@@ -86,17 +95,35 @@ def render_settings_controls(prefix: str) -> dict:
             step=0.05,
             key=f"{prefix}_temperature",
         )
-        api_status = "설정됨" if os.getenv("OPENAI_API_KEY") else "미설정"
-        st.caption(f"OPENAI_API_KEY: {api_status}")
+        st.caption(f"백엔드 API: {api_base_url()}")
 
     return {
         "persona_count": persona_count,
         "debate_rounds": debate_rounds,
         "max_reply_agents": max_reply_agents,
         "use_llm": use_llm,
-        "model": model.strip() or None,
+        "model": model,
         "temperature": temperature,
     }
+
+def available_models_for_ui() -> tuple[list[str], dict[str, str], str, str | None]:
+    fallback_model = os.getenv("PERSONA_GRAPH_MODEL", "gpt-5.4-mini").strip() or "gpt-5.4-mini"
+    try:
+        catalog = load_model_catalog()
+    except PersonaGraphAPIError as exc:
+        return [fallback_model], {fallback_model: fallback_model}, fallback_model, str(exc)
+
+    model_ids = [option.id for option in catalog.models]
+    model_labels = {option.id: option.label for option in catalog.models}
+    default_model = catalog.default_model
+    if default_model not in model_ids:
+        model_ids.insert(0, default_model)
+        model_labels[default_model] = default_model
+    if not model_ids:
+        model_ids = [fallback_model]
+        model_labels[fallback_model] = fallback_model
+        default_model = fallback_model
+    return model_ids, model_labels, default_model, None
 
 def dismiss_settings_dialog() -> None:
     st.session_state["pg_show_settings_dialog"] = False

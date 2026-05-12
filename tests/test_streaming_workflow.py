@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import unittest
 
 from app.agents.evaluator import EvaluatorAgent
@@ -76,7 +78,12 @@ class TranscriptRecordingSpecialist:
         self.respond_transcripts = []
         self.reply_transcripts = []
 
-    def answer(self, problem: str, persona: Persona) -> AgentMessage:
+    def answer(
+        self,
+        problem: str,
+        persona: Persona,
+        search_context: str | None = None,
+    ) -> AgentMessage:
         return AgentMessage(
             stage="specialist",
             agent_id=persona.id,
@@ -111,6 +118,7 @@ class TranscriptRecordingSpecialist:
         transcript: str,
         user_content: str,
         round_number: int,
+        search_context: str | None = None,
     ) -> AgentMessage:
         self.reply_transcripts.append((persona.id, round_number, transcript))
         return AgentMessage(

@@ -74,9 +74,6 @@ def message_item(message, personas_by_id: dict) -> dict | None:
 def chat_thread_items(response: SolveResponse, confirmed_settings: dict | None = None) -> list[dict]:
     personas_by_id = {persona.id: persona for persona in response.personas}
     items = [initial_problem_item(response)]
-    settings_item = settings_summary_item(confirmed_settings)
-    if settings_item:
-        items.append(settings_item)
     items.extend(persona_intro_item(persona) for persona in response.personas)
     for message in response.messages:
         item = message_item(message, personas_by_id)
@@ -163,27 +160,6 @@ def agent_group_key(item: dict, group_index: int | None = None) -> str:
     if group_index is not None:
         return f"{stage}_{phase}_group_{group_index}"
     return f"{stage}_{phase}"
-
-def settings_summary_item(settings: dict | None) -> dict | None:
-    if not settings:
-        return None
-    persona_count = int(settings.get("persona_count", 3))
-    debate_rounds = int(settings.get("debate_rounds", 1))
-    max_reply_agents = int(settings.get("max_reply_agents", 2))
-    content = (
-        "이 설정으로 토론을 시작할게요.\n"
-        f"참여 Agent 수: {persona_count}명\n"
-        f"토론 깊이: {debate_rounds}단계\n"
-        f"후속 답변 Agent 수: {max_reply_agents}명"
-    )
-    return {
-        "kind": "system",
-        "name": "PersonaGraph",
-        "meta": "대화 설정",
-        "content": content,
-        "avatar_name": "PersonaGraph",
-        "avatar_fallback": "PG",
-    }
 
 def render_chat_bubble(item: dict) -> None:
     kind = item.get("kind", "agent")
@@ -295,11 +271,6 @@ def render_chat_thread(
     if include_anchor:
         st.markdown('<div id="pg-chat-bottom" class="pg-scroll-anchor"></div>', unsafe_allow_html=True)
         scroll_chat_to_bottom()
-
-def render_confirmed_settings_bubble(settings: dict | None) -> None:
-    item = settings_summary_item(settings)
-    if item:
-        render_chat_bubble(item)
 
 def render_pending_problem_thread(problem: str) -> None:
     render_chat_bubble(

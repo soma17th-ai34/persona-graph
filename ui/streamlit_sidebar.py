@@ -4,7 +4,7 @@ import html
 
 import streamlit as st
 
-from app.storage import list_runs, load_run
+from ui.api_client import PersonaGraphAPIError, list_run_summaries, load_run_detail
 from ui.streamlit_common import normalize_summary_text, trim_summary
 from ui.streamlit_state import reset_chat_state
 
@@ -34,7 +34,11 @@ def render_chat_sidebar() -> None:
             st.rerun()
 
         st.markdown('<div class="pg-sidebar-title">최근</div>', unsafe_allow_html=True)
-        summaries = list_runs()
+        try:
+            summaries = list_run_summaries()
+        except PersonaGraphAPIError as exc:
+            st.warning(str(exc))
+            return
         if not summaries:
             st.markdown(
                 '<div class="pg-sidebar-empty">아직 저장된 대화가 없습니다.</div>',
@@ -57,9 +61,9 @@ def render_chat_sidebar() -> None:
                 use_container_width=True,
             ):
                 try:
-                    response = load_run(summary.run_id)
-                except FileNotFoundError:
-                    st.warning("선택한 대화를 찾을 수 없습니다.")
+                    response = load_run_detail(summary.run_id)
+                except PersonaGraphAPIError as exc:
+                    st.warning(str(exc))
                     continue
                 st.session_state["pg_current_response"] = response
                 st.session_state["pg_current_run_id"] = summary.run_id

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from app.llm import LLMClient, parse_json_object
 from app.schemas import AgentMessage, Persona
 

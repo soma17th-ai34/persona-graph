@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+from html.parser import HTMLParser
+from urllib.parse import parse_qs, unquote, urlencode, urlparse
+from urllib.request import Request, urlopen
 
 from dotenv import load_dotenv
 
@@ -28,7 +31,7 @@ class SearchClient:
 
     @property
     def enabled(self) -> bool:
-        return self._client is not None
+        return True
 
     def classify(self, text: str, llm: LLMClient) -> Classification:
         result = llm.complete(
@@ -52,8 +55,10 @@ class SearchClient:
         return Classification(needs_search=needs and bool(queries), queries=queries)
 
     def fetch(self, queries: list[str]) -> str | None:
-        if not self.enabled or not queries:
+        if not queries:
             return None
+        if self._client is None:
+            return self._fetch_duckduckgo(queries)
         lines: list[str] = []
         for query in queries:
             try:
@@ -66,3 +71,81 @@ class SearchClient:
             except Exception:
                 continue
         return "\n".join(lines) if lines else None
+
+    def _fetch_duckduckgo(self, queries: list[str]) -> str | None:
+        lines: list[str] = []
+        for query in queries:
+            try:
+                url = f"https://duckduckgo.com/html/?{urlencode({'q': query})}"
+                request = Request(url, headers={"User-Agent": "PersonaGraph/1.0"})
+                with urlopen(request, timeout=8) as response:
+                    html = response.read().decode("utf-8", errors="ignore")
+                for title, href, snippet in _parse_duckduckgo_results(html)[:3]:
+                    body = snippet or href
+                    if title and body:
+                        lines.append(f"[{title}] {body[:300]}")
+            except Exception:
+                continue
+        return "\n".join(lines[:9]) if lines else None
+
+
+class _DuckDuckGoResultParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.results: list[dict[str, str]] = []
+        self._current: dict[str, str] | None = None
+        self._active_field: str | None = None
+
+    def handle_starttag(self, tag: str, attrs):
+        attrs_dict = dict(attrs)
+        class_name = attrs_dict.get("class", "")
+        if tag == "a" and "result__a" in class_name:
+            self._current = {
+                "title": "",
+                "href": _clean_duckduckgo_url(attrs_dict.get("href", "")),
+                "snippet": "",
+            }
+            self._active_field = "title"
+            self.results.append(self._current)
+            return
+        if self._current is not None and "result__snippet" in class_name:
+            self._active_field = "snippet"
+
+    def handle_endtag(self, tag: str):
+        if tag == "a" and self._active_field == "title":
+            self._active_field = None
+        elif self._active_field == "snippet":
+            self._active_field = None
+
+    def handle_data(self, data: str):
+        if self._current is None or self._active_field is None:
+            return
+        value = " ".join(data.split())
+        if not value:
+            return
+        existing = self._current.get(self._active_field, "")
+        self._current[self._active_field] = f"{existing} {value}".strip()
+
+
+def _parse_duckduckgo_results(html: str) -> list[tuple[str, str, str]]:
+    parser = _DuckDuckGoResultParser()
+    parser.feed(html)
+    parsed: list[tuple[str, str, str]] = []
+    for item in parser.results:
+        title = item.get("title", "").strip()
+        href = item.get("href", "").strip()
+        snippet = item.get("snippet", "").strip()
+        if title:
+            parsed.append((title, href, snippet))
+    return parsed
+
+
+def _clean_duckduckgo_url(href: str) -> str:
+    if not href:
+        return ""
+    parsed = urlparse(href)
+    if parsed.path == "/l/":
+        target = parse_qs(parsed.query).get("uddg", [""])[0]
+        if target:
+            return unquote(target)
+    return href

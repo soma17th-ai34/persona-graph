@@ -6,8 +6,7 @@ import time
 import streamlit as st
 
 from app.schemas import SolveResponse
-from app.storage import save_run
-from app.workflow import continue_discussion_stream, solve_problem_stream
+from ui.api_client import PersonaGraphAPIError, stream_continue_discussion, stream_solve_problem
 from ui.streamlit_browser import scroll_chat_to_bottom
 from ui.streamlit_chat import (
     agent_group_key,
@@ -16,7 +15,6 @@ from ui.streamlit_chat import (
     persona_intro_item,
     render_chat_bubble,
     render_chat_item,
-    render_confirmed_settings_bubble,
     render_chat_thread,
     render_pending_problem_thread,
 )
@@ -79,7 +77,6 @@ def render_streaming_chat_thread(
                 )
             elif pending_problem:
                 render_pending_problem_thread(pending_problem)
-                render_confirmed_settings_bubble(confirmed_settings)
 
         if render_context and base_response is None:
             for persona in live_personas:
@@ -253,24 +250,28 @@ def run_initial_stream() -> None:
         st.rerun()
 
     settings = st.session_state["pg_settings"]
-    response = consume_chat_stream(
-        solve_problem_stream(
-            problem=problem,
-            persona_count=int(settings["persona_count"]),
-            debate_rounds=int(settings["debate_rounds"]),
-            use_llm=bool(settings["use_llm"]),
-            model=settings.get("model"),
-            temperature=float(settings["temperature"]),
-        ),
-        pending_problem=problem,
-    )
+    try:
+        response = consume_chat_stream(
+            stream_solve_problem(
+                problem=problem,
+                persona_count=int(settings["persona_count"]),
+                debate_rounds=int(settings["debate_rounds"]),
+                use_llm=bool(settings["use_llm"]),
+                model=settings.get("model"),
+                temperature=float(settings["temperature"]),
+            ),
+            pending_problem=problem,
+        )
+    except PersonaGraphAPIError as exc:
+        st.error(str(exc))
+        st.session_state["pg_chat_mode"] = "configuring"
+        return
     if response is None:
         st.error("토론 결과를 만들지 못했습니다.")
         st.session_state["pg_chat_mode"] = "configuring"
         return
-    stored = save_run(response)
-    st.session_state["pg_current_response"] = stored
-    st.session_state["pg_current_run_id"] = stored.run_id
+    st.session_state["pg_current_response"] = response
+    st.session_state["pg_current_run_id"] = response.run_id
     st.session_state["pg_pending_problem"] = None
     st.session_state["pg_chat_mode"] = "completed"
 
@@ -282,24 +283,32 @@ def run_followup_stream() -> None:
         st.rerun()
 
     settings = st.session_state["pg_settings"]
-    updated = consume_chat_stream(
-        continue_discussion_stream(
-            response=response,
-            user_content=content,
-            max_agents=int(settings["max_reply_agents"]),
-            use_llm=bool(settings["use_llm"]),
-            model=settings.get("model"),
-            temperature=float(settings["temperature"]),
-        ),
-        base_response=response,
-        initial_personas=response.personas,
-    )
+    if not response.run_id:
+        st.error("저장된 대화 ID가 없어 이어 말할 수 없습니다.")
+        st.session_state["pg_chat_mode"] = "completed"
+        return
+    try:
+        updated = consume_chat_stream(
+            stream_continue_discussion(
+                run_id=response.run_id,
+                content=content,
+                max_agents=int(settings["max_reply_agents"]),
+                use_llm=bool(settings["use_llm"]),
+                model=settings.get("model"),
+                temperature=float(settings["temperature"]),
+            ),
+            base_response=response,
+            initial_personas=response.personas,
+        )
+    except PersonaGraphAPIError as exc:
+        st.error(str(exc))
+        st.session_state["pg_chat_mode"] = "completed"
+        return
     if updated is None:
         st.error("이어 말하기 결과를 만들지 못했습니다.")
         st.session_state["pg_chat_mode"] = "completed"
         return
-    stored = save_run(updated)
-    st.session_state["pg_current_response"] = stored
-    st.session_state["pg_current_run_id"] = stored.run_id
+    st.session_state["pg_current_response"] = updated
+    st.session_state["pg_current_run_id"] = updated.run_id
     st.session_state["pg_pending_followup"] = None
     st.session_state["pg_chat_mode"] = "completed"

@@ -64,6 +64,17 @@ class ContinueRequest(BaseModel):
     temperature: float = Field(default=0.35, ge=0.0, le=1.2)
 
 
+class ModelOption(BaseModel):
+    id: str
+    label: str
+    provider: Optional[str] = None
+
+
+class ModelCatalogResponse(BaseModel):
+    default_model: str
+    models: list[ModelOption]
+
+
 class Evaluation(BaseModel):
     consistency: int = Field(..., ge=1, le=5)
     specificity: int = Field(..., ge=1, le=5)
