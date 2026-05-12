@@ -47,6 +47,7 @@ def solve_problem_stream(
         debate_rounds=debate_rounds,
         use_llm=use_llm,
         model=llm.model,
+        search_enabled=supervisor.search_client.enabled,
         problem=problem,
     )
     try:

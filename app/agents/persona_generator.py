@@ -45,13 +45,14 @@ class PersonaGenerator:
     def __init__(self, llm: LLMClient):
         self.llm = llm
 
-    def generate(self, problem: str, count: int) -> tuple[list[Persona], AgentMessage]:
+    def generate(self, problem: str, count: int, search_context: str | None = None) -> tuple[list[Persona], AgentMessage]:
+        context_block = f"\n참고 자료 (페르소나 설계에 활용하세요):\n{search_context}\n" if search_context else ""
         prompt = f"""
 이 문제를 해결하기 위한 상호보완적인 AI 에이전트 페르소나 {count}개를 만드세요.
 
 문제:
 {problem}
-
+{context_block}
 반드시 JSON 배열만 반환하세요. 각 항목은 다음 필드를 포함해야 합니다.
 - id: snake_case 형식의 고유 ID
 - name: 짧은 한국어 에이전트 이름

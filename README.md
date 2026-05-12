@@ -47,6 +47,19 @@ PERSONA_GRAPH_MODEL=gpt-5.4-mini
 
 API 키가 없거나 호출이 실패하면 로컬 폴백 응답으로 전체 워크플로가 계속 진행됩니다.
 
+## 검색 API 적용 방법
+  1. 패키지 설치(새로운 환경에 세팅하는 경우 requirements.txt 내에 들어있기 때문에 필요 없음)
+
+        pip install tavily-python
+
+  2. Tavily API 키 발급
+
+        https://app.tavily.com 에서 회원가입 후 API 키 발급
+
+  3. .env 파일에 키 추가
+
+        TAVILY_API_KEY=tvly-xxxxxxxxxxxxxxxx
+
 ## Run API
 
 ```bash
@@ -142,10 +155,22 @@ persona-graph/
     llm.py
     characters.py
     schemas.py
+    search.py
     storage.py
+    terminal_logging.py
     workflow.py
   ui/
     streamlit_app.py
+    streamlit_browser.py
+    streamlit_chat.py
+    streamlit_common.py
+    streamlit_flow.py
+    streamlit_header.py
+    streamlit_settings.py
+    streamlit_sidebar.py
+    streamlit_state.py
+    streamlit_streaming.py
+    streamlit_styles.py
   assets/
     hero/
       personagraph-agent-network.png

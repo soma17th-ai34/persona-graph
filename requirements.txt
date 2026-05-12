@@ -3,4 +3,5 @@ openai>=1.30
 pydantic>=2.7
 python-dotenv>=1.0
 streamlit>=1.35
+tavily-python>=0.3
 uvicorn[standard]>=0.29

@@ -9,6 +9,8 @@ from app.agents.synthesizer import SynthesizerAgent
 from app.characters import assign_characters
 from app.llm import LLMClient
 from app.schemas import AgentMessage, SolveResponse
+from app.search import SearchClient
+from app.terminal_logging import terminal_log
 
 
 StreamEvent = dict[str, object]
@@ -26,6 +28,7 @@ class Supervisor:
         self.synthesizer = SynthesizerAgent(llm)
         self.evaluator = EvaluatorAgent(llm)
         self.llm = llm
+        self.search_client = SearchClient()
 
     def solve(self, problem: str, persona_count: int, debate_rounds: int = 1) -> SolveResponse:
         final_response = None
@@ -42,8 +45,9 @@ class Supervisor:
         persona_count: int,
         debate_rounds: int = 1,
     ):
+        search_context = self._fetch_search_context(problem)
         yield self._started_event("persona_generator", "페르소나 생성기", "persona_generation")
-        personas, persona_message = self.persona_generator.generate(problem, persona_count)
+        personas, persona_message = self.persona_generator.generate(problem, persona_count, search_context=search_context)
         personas = assign_characters(personas)
         yield {"type": "personas_ready", "personas": personas}
         yield self._message_event(persona_message)
@@ -55,7 +59,7 @@ class Supervisor:
         specialist_messages: list[AgentMessage] = []
         for persona in personas:
             yield self._started_event(persona.id, persona.name, "specialist")
-            message = self.specialist.answer(problem, persona)
+            message = self.specialist.answer(problem, persona, search_context=search_context)
             specialist_messages.append(message)
             yield self._message_event(message)
 
@@ -139,6 +143,7 @@ class Supervisor:
         user_content: str,
         max_agents: int = 2,
     ):
+        search_context = self._fetch_search_context(user_content)
         round_number = self._next_round(response.messages)
         selected_personas = self._select_reply_personas(
             personas=response.personas,
@@ -171,6 +176,7 @@ class Supervisor:
                 transcript=round_transcript,
                 user_content=user_content,
                 round_number=round_number,
+                search_context=search_context,
             )
             agent_replies.append(reply)
             yield self._message_event(reply)
@@ -484,6 +490,27 @@ class Supervisor:
             character.lower() if character.isalnum() else " "
             for character in text
         )
+
+    def _fetch_search_context(self, text: str) -> str | None:
+        if not self.search_client.enabled:
+            terminal_log("search_skip", reason="no_api_key")
+            return None
+        try:
+            classification = self.search_client.classify(text, self.llm)
+            if not classification.needs_search:
+                terminal_log("search_skip", reason="not_needed")
+                return None
+            terminal_log("search_classify", queries=classification.queries)
+            context = self.search_client.fetch(classification.queries)
+            terminal_log(
+                "search_fetch",
+                queries=len(classification.queries),
+                results="no_results" if context is None else f"{len(context.splitlines())}건",
+            )
+            return context
+        except Exception as exc:
+            terminal_log("search_error", error=type(exc).__name__, detail=str(exc))
+            return None
 
     def _strip_korean_suffix(self, term: str) -> str:
         suffixes = (
