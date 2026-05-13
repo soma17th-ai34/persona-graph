@@ -12,6 +12,7 @@ def default_chat_settings() -> dict:
         "max_reply_agents": 2,
         "use_llm": True,
         "model": os.getenv("PERSONA_GRAPH_MODEL", "gpt-5.4-mini"),
+        "search_mode": "auto",
         "temperature": 0.35,
     }
 

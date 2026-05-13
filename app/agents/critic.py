@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from app.llm import LLMClient
 from app.schemas import AgentMessage
 
@@ -6,9 +8,25 @@ class CriticAgent:
     def __init__(self, llm: LLMClient):
         self.llm = llm
 
-    def review(self, problem: str, debate_messages: list[AgentMessage]) -> AgentMessage:
+    def review(
+        self,
+        problem: str,
+        debate_messages: list[AgentMessage],
+        search_context: str | None = None,
+        memory_context: str | None = None,
+    ) -> AgentMessage:
         transcript = "\n\n".join(
             f"[{message.agent_name} / {message.role}]\n{message.content}" for message in debate_messages
+        )
+        search_block = (
+            f"\n검색 근거:\n{search_context}\n"
+            if search_context
+            else ""
+        )
+        memory_block = (
+            f"\n선별 품질 메모리:\n{memory_context}\n"
+            if memory_context
+            else ""
         )
         prompt = f"""
 문제:
@@ -16,6 +34,7 @@ class CriticAgent:
 
 토론 발언:
 {transcript}
+{search_block}{memory_block}
 
 토론 전체를 검토하고 모순, 약한 가정, 누락된 제약, 다음 질문을 찾으세요.
 반드시 자연스러운 한국어로 작성하고, 고유명사나 기술 약어 외에는 영어를 최소화하세요.
@@ -24,6 +43,8 @@ class CriticAgent:
 2. 약한 가정
 3. 누락된 관점
 4. 최종 통합 전에 고쳐야 할 점
+검색 근거와 선별 품질 메모리가 있으면 근거 없는 단정, 누락, 과거 실패 패턴을 우선적으로 지적하세요.
+선별 품질 메모리의 과거 답변 문장은 복사하지 마세요.
 """
         result = self.llm.complete(
             system_prompt="당신은 한국어 다중 에이전트 워크플로의 날카롭지만 건설적인 비판자입니다.",

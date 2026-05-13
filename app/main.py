@@ -57,6 +57,7 @@ def solve(request: SolveRequest) -> SolveResponse:
         debate_rounds=request.debate_rounds,
         use_llm=request.use_llm,
         model=model,
+        search_mode=request.search_mode,
         temperature=request.temperature,
     )
     return save_run(response)
@@ -102,6 +103,7 @@ def continue_run(run_id: str, request: ContinueRequest) -> SolveResponse:
         max_agents=request.max_agents,
         use_llm=request.use_llm,
         model=model,
+        search_mode=request.search_mode,
         temperature=request.temperature,
     )
     return save_run(updated)
@@ -132,6 +134,7 @@ def _stream_solve_events(request: SolveRequest, model: str):
         debate_rounds=request.debate_rounds,
         use_llm=request.use_llm,
         model=model,
+        search_mode=request.search_mode,
         temperature=request.temperature,
     ):
         if event.get("type") == "final_response":
@@ -152,6 +155,7 @@ def _stream_followup_events(
         max_agents=request.max_agents,
         use_llm=request.use_llm,
         model=model,
+        search_mode=request.search_mode,
         temperature=request.temperature,
     ):
         if event.get("type") == "final_response":

@@ -48,6 +48,7 @@ def stream_solve_problem(
     debate_rounds: int,
     use_llm: bool,
     model: str | None,
+    search_mode: str,
     temperature: float,
 ):
     request = SolveRequest(
@@ -56,6 +57,7 @@ def stream_solve_problem(
         debate_rounds=debate_rounds,
         use_llm=use_llm,
         model=model,
+        search_mode=search_mode,
         temperature=temperature,
     )
     yield from _stream_request("/solve/stream", request.model_dump(mode="json"))
@@ -68,6 +70,7 @@ def stream_continue_discussion(
     max_agents: int,
     use_llm: bool,
     model: str | None,
+    search_mode: str,
     temperature: float,
 ):
     request = ContinueRequest(
@@ -75,6 +78,7 @@ def stream_continue_discussion(
         max_agents=max_agents,
         use_llm=use_llm,
         model=model,
+        search_mode=search_mode,
         temperature=temperature,
     )
     yield from _stream_request(

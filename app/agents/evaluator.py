@@ -73,10 +73,14 @@ class EvaluatorAgent:
         debate_messages: list[AgentMessage],
         critique: AgentMessage,
         synthesis: AgentMessage,
+        search_context: str | None = None,
+        memory_context: str | None = None,
     ) -> dict[str, object]:
         transcript = "\n\n".join(
             f"[{message.agent_name} / {message.role}]\n{message.content}" for message in debate_messages
         )
+        search_block = f"\n검색 근거:\n{search_context}\n" if search_context else ""
+        memory_block = f"\n선별 품질 메모리:\n{memory_context}\n" if memory_context else ""
         prompt = f"""
 사용자의 원래 문제:
 {problem}
@@ -86,6 +90,7 @@ class EvaluatorAgent:
 
 내부 비판:
 {critique.content}
+{search_block}{memory_block}
 
 최종 정리:
 {synthesis.content}
@@ -104,6 +109,8 @@ class EvaluatorAgent:
 - 사용자의 실제 질문에 직접 답해야 합니다.
 - 토론과 내부 비판에서 나온 핵심을 반영해야 합니다.
 - 새로운 주제나 후속 제안을 임의로 추가하면 감점합니다.
+- 검색 근거와 선별 품질 메모리에 없는 구체 사실을 단정하면 unsupported_points에 넣고 감점합니다.
+- 선별 품질 메모리의 과거 답변 문장을 복사한 흔적이 있으면 style_issues에 넣고 감점합니다.
 - 발표 화면에서 읽을 수 있도록 너무 길지도, 너무 짧지도 않아야 합니다.
 - 단순 문장 다듬기로 충분하면 needs_extra_round는 false입니다.
 """

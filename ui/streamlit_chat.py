@@ -12,6 +12,7 @@ from ui.streamlit_common import (
     character_class,
     character_for_persona,
     message_content_html,
+    normalize_summary_text,
     stage_meta_label,
     system_avatar_label,
     trim_summary,
@@ -187,6 +188,11 @@ def render_chat_bubble(item: dict) -> None:
 
     bubble_class = "pg-chat-bubble-system" if kind == "system" else "pg-chat-bubble-agent"
     row_class = "pg-chat-row-system" if kind == "system" else "pg-chat-row-agent"
+    content_markup = (
+        moderator_message_html(content)
+        if item.get("stage") == "moderator"
+        else message_content_html(content)
+    )
     avatar = avatar_markup(
         str(item.get("avatar_name", name)),
         character,
@@ -199,13 +205,45 @@ def render_chat_bubble(item: dict) -> None:
   <div class="pg-chat-avatar-wrap">{avatar}</div>
   <div class="pg-chat-bubble {bubble_class} {character_css}">
     <div class="pg-message-meta"><span class="pg-message-name">{html.escape(name)}</span><span>{html.escape(meta)}</span></div>
-    {message_content_html(content)}
+    {content_markup}
   </div>
 </div>
 </div>
 """,
         unsafe_allow_html=True,
     )
+
+def moderator_summary(content: str, max_length: int = 90) -> str:
+    cleaned = normalize_summary_text(content)
+    if len(cleaned) <= max_length:
+        return cleaned
+
+    first_boundary = -1
+    for marker in ("다.", "요.", ". ", "? ", "! "):
+        index = cleaned.find(marker)
+        while 0 <= index < max_length:
+            boundary = index + len(marker)
+            if boundary >= 24 and (first_boundary == -1 or boundary < first_boundary):
+                first_boundary = boundary
+                break
+            index = cleaned.find(marker, index + len(marker))
+
+    if first_boundary != -1:
+        return cleaned[:first_boundary].strip()
+    return trim_summary(cleaned, max_length)
+
+def moderator_message_html(content: str) -> str:
+    summary = moderator_summary(content)
+    normalized = normalize_summary_text(content)
+    if normalized == summary:
+        return message_content_html(content)
+    return f"""
+<div class="pg-moderator-preview">{message_content_html(summary)}</div>
+<details class="pg-moderator-full">
+  <summary>전문 보기</summary>
+  <div class="pg-moderator-full-body">{message_content_html(content)}</div>
+</details>
+"""
 
 def render_agent_group(item: dict) -> None:
     title = str(item.get("title", "Agent 발화"))

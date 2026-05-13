@@ -97,12 +97,31 @@ def render_settings_controls(prefix: str) -> dict:
         )
         st.caption(f"백엔드 API: {api_base_url()}")
 
+    with st.expander("검색 설정", expanded=False):
+        search_options = {
+            "auto": "자동",
+            "always": "항상 검색",
+            "off": "검색 끄기",
+        }
+        current_search_mode = str(current.get("search_mode", "auto"))
+        if current_search_mode not in search_options:
+            current_search_mode = "auto"
+        search_mode = st.selectbox(
+            "검색 모드",
+            options=list(search_options.keys()),
+            index=list(search_options.keys()).index(current_search_mode),
+            format_func=lambda mode: search_options[mode],
+            help="자동은 질문에서 최신성, 추천, 비교, 가격, 메타 같은 신호가 보이면 검색을 사용합니다.",
+            key=f"{prefix}_search_mode",
+        )
+
     return {
         "persona_count": persona_count,
         "debate_rounds": debate_rounds,
         "max_reply_agents": max_reply_agents,
         "use_llm": use_llm,
         "model": model,
+        "search_mode": search_mode,
         "temperature": temperature,
     }
 

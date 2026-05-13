@@ -563,6 +563,53 @@ div[data-testid="stVerticalBlock"]:has(.pg-empty-samples-anchor) div[data-testid
   border: 1px solid var(--pg-border-default);
 }
 
+.pg-moderator-preview {
+  color: var(--pg-text-primary);
+}
+
+.pg-moderator-full {
+  margin-top: 0.58rem;
+  border-top: 1px solid var(--pg-border-default);
+  padding-top: 0.42rem;
+}
+
+.pg-moderator-full summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  color: var(--pg-text-muted);
+  font-size: 0.78rem;
+  font-weight: 750;
+  line-height: 1.35;
+  cursor: pointer;
+  list-style: none;
+}
+
+.pg-moderator-full summary::-webkit-details-marker {
+  display: none;
+}
+
+.pg-moderator-full summary::after {
+  content: "v";
+  color: var(--pg-text-muted);
+  font-size: 0.8rem;
+}
+
+.pg-moderator-full[open] summary::after {
+  content: "^";
+}
+
+.pg-moderator-full summary:hover {
+  color: var(--pg-text-primary);
+}
+
+.pg-moderator-full-body {
+  margin-top: 0.45rem;
+  color: var(--pg-text-secondary);
+  font-size: 0.9rem;
+  line-height: 1.55;
+}
+
 .pg-chat-bubble-agent:hover {
   border-color: var(--pg-persona-border);
 }

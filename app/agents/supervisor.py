@@ -8,7 +8,8 @@ from app.agents.specialist import SpecialistAgent
 from app.agents.synthesizer import SynthesizerAgent
 from app.characters import assign_characters
 from app.llm import LLMClient
-from app.schemas import AgentMessage, SolveResponse
+from app.run_memory import RunMemoryClient
+from app.schemas import AgentMessage, MemoryRecord, ReasoningRecord, SearchRecord, SolveResponse
 from app.search import SearchClient
 from app.terminal_logging import terminal_log
 
@@ -29,10 +30,17 @@ class Supervisor:
         self.evaluator = EvaluatorAgent(llm)
         self.llm = llm
         self.search_client = SearchClient()
+        self.memory_client = RunMemoryClient()
 
-    def solve(self, problem: str, persona_count: int, debate_rounds: int = 1) -> SolveResponse:
+    def solve(
+        self,
+        problem: str,
+        persona_count: int,
+        debate_rounds: int = 1,
+        search_mode: str = "auto",
+    ) -> SolveResponse:
         final_response = None
-        for event in self.solve_stream(problem, persona_count, debate_rounds):
+        for event in self.solve_stream(problem, persona_count, debate_rounds, search_mode=search_mode):
             if event["type"] == "final_response":
                 final_response = event["response"]
         if final_response is None:
@@ -44,8 +52,14 @@ class Supervisor:
         problem: str,
         persona_count: int,
         debate_rounds: int = 1,
+        search_mode: str = "auto",
     ):
-        search_context = self._fetch_search_context(problem)
+        search_context, search_record = self._fetch_search_context(
+            text=problem,
+            mode=search_mode,
+            phase="initial",
+        )
+        memory_context, memory_record = self._fetch_memory_context(problem, "initial")
         yield self._started_event("persona_generator", "페르소나 생성기", "persona_generation")
         personas, persona_message = self.persona_generator.generate(problem, persona_count, search_context=search_context)
         personas = assign_characters(personas)
@@ -97,17 +111,24 @@ class Supervisor:
 
         debate_messages = [*specialist_messages, *discussion_messages]
         yield self._started_event("critic", "비판 에이전트", "critic")
-        critique = self.critic.review(problem, debate_messages)
+        critique = self.critic.review(
+            problem,
+            debate_messages,
+            search_context=search_context,
+            memory_context=memory_context,
+        )
         critique.metadata["phase"] = "quality_review"
         messages.append(critique)
         yield self._message_event(critique)
 
-        synthesis, critique, evaluation, quality_checks = yield from self._verified_synthesis_stream(
+        synthesis, critique, evaluation, quality_checks, reasoning_records = yield from self._verified_synthesis_stream(
             problem=problem,
             personas=personas,
             messages=messages,
             critique=critique,
             final_phase="initial_synthesis",
+            search_context=search_context,
+            memory_context=memory_context,
         )
         messages.append(synthesis)
 
@@ -118,6 +139,9 @@ class Supervisor:
             messages=messages,
             final_answer=synthesis.content,
             evaluation=evaluation,
+            search_records=[search_record],
+            reasoning_records=reasoning_records,
+            memory_records=[memory_record],
             used_llm=used_llm,
             model=self.llm.model,
         )
@@ -128,9 +152,15 @@ class Supervisor:
         response: SolveResponse,
         user_content: str,
         max_agents: int = 2,
+        search_mode: str = "auto",
     ) -> SolveResponse:
         final_response = None
-        for event in self.continue_discussion_stream(response, user_content, max_agents):
+        for event in self.continue_discussion_stream(
+            response,
+            user_content,
+            max_agents,
+            search_mode=search_mode,
+        ):
             if event["type"] == "final_response":
                 final_response = event["response"]
         if final_response is None:
@@ -142,8 +172,17 @@ class Supervisor:
         response: SolveResponse,
         user_content: str,
         max_agents: int = 2,
+        search_mode: str = "auto",
     ):
-        search_context = self._fetch_search_context(user_content)
+        search_context, search_record = self._fetch_search_context(
+            text=user_content,
+            mode=search_mode,
+            phase="followup",
+        )
+        memory_context, memory_record = self._fetch_memory_context(
+            f"{response.problem}\n{user_content}",
+            "followup",
+        )
         round_number = self._next_round(response.messages)
         selected_personas = self._select_reply_personas(
             personas=response.personas,
@@ -183,13 +222,15 @@ class Supervisor:
 
         messages.extend(agent_replies)
 
-        synthesis, critique, evaluation, quality_checks = yield from self._verified_synthesis_stream(
+        synthesis, critique, evaluation, quality_checks, reasoning_records = yield from self._verified_synthesis_stream(
             problem=response.problem,
             personas=response.personas,
             messages=messages,
             critique=self._latest_critique(messages),
             round_number=round_number,
             final_phase="followup_synthesis",
+            search_context=search_context,
+            memory_context=memory_context,
         )
         messages.append(synthesis)
         used_llm = response.used_llm or self._used_llm(messages, evaluation, quality_checks)
@@ -198,6 +239,9 @@ class Supervisor:
                 "messages": messages,
                 "final_answer": synthesis.content,
                 "evaluation": evaluation,
+                "search_records": [*response.search_records, search_record],
+                "reasoning_records": [*response.reasoning_records, *reasoning_records],
+                "memory_records": [*response.memory_records, memory_record],
                 "used_llm": used_llm,
                 "model": self.llm.model,
             }
@@ -212,6 +256,8 @@ class Supervisor:
         critique: AgentMessage,
         round_number: int | None = None,
         final_phase: str = "initial_synthesis",
+        search_context: str | None = None,
+        memory_context: str | None = None,
     ):
         quality_checks: list[dict[str, object]] = []
         refine_instruction: str | None = None
@@ -220,17 +266,32 @@ class Supervisor:
         evaluation = None
         extra_round_used = False
         max_attempts = self.evaluator.REVERSE_VERIFICATION_MAX_ATTEMPTS
+        reasoning_records: list[ReasoningRecord] = []
+        reasoning_phase = "followup" if final_phase == "followup_synthesis" else "initial"
 
         for attempt in range(1, max_attempts + 1):
             yield self._started_event("synthesizer", "종합 에이전트", "synthesizer", round_number)
-            synthesis = self.synthesizer.synthesize(
-                problem,
-                self._discussion_messages(messages),
-                critique,
-                improvement_suggestions=evaluation.improvement_suggestions if evaluation else None,
-                previous_synthesis=previous_synthesis,
-                refine_instruction=refine_instruction,
-            )
+            if attempt == 1 and not previous_synthesis and not refine_instruction and evaluation is None:
+                synthesis, reasoning_record = self.synthesizer.synthesize_with_candidates(
+                    problem=problem,
+                    debate_messages=self._discussion_messages(messages),
+                    critique=critique,
+                    phase=reasoning_phase,
+                    search_context=search_context,
+                    memory_context=memory_context,
+                )
+                reasoning_records.append(reasoning_record)
+            else:
+                synthesis = self.synthesizer.synthesize(
+                    problem,
+                    self._discussion_messages(messages),
+                    critique,
+                    improvement_suggestions=evaluation.improvement_suggestions if evaluation else None,
+                    previous_synthesis=previous_synthesis,
+                    refine_instruction=refine_instruction,
+                    search_context=search_context,
+                    memory_context=memory_context,
+                )
             synthesis.metadata["evaluation_attempt"] = attempt
 
             yield self._started_event("evaluator", "평가 에이전트", "evaluator", round_number)
@@ -245,6 +306,8 @@ class Supervisor:
                 self._discussion_messages(messages),
                 critique,
                 synthesis,
+                search_context=search_context,
+                memory_context=memory_context,
             )
             quality_check = self._quality_check(evaluation, reverse_check, attempt)
             quality_checks.append(quality_check)
@@ -261,6 +324,8 @@ class Supervisor:
                     personas=personas,
                     messages=messages,
                     quality_check=quality_check,
+                    search_context=search_context,
+                    memory_context=memory_context,
                 )
 
         if synthesis is None or evaluation is None:
@@ -274,7 +339,7 @@ class Supervisor:
         evaluation.metadata["quality_check"] = quality_checks[-1] if quality_checks else {}
         evaluation.metadata["quality_check_history"] = quality_checks
         yield self._message_event(synthesis)
-        return synthesis, critique, evaluation, quality_checks
+        return synthesis, critique, evaluation, quality_checks, reasoning_records
 
     def _evaluation_extra_round_stream(
         self,
@@ -282,6 +347,8 @@ class Supervisor:
         personas,
         messages: list[AgentMessage],
         quality_check: dict[str, object],
+        search_context: str | None = None,
+        memory_context: str | None = None,
     ):
         round_number = self._next_round(messages)
         focus = self._quality_refine_instruction(quality_check, None)
@@ -314,7 +381,12 @@ class Supervisor:
             yield self._message_event(response)
 
         yield self._started_event("critic", "비판 에이전트", "critic", round_number)
-        critique = self.critic.review(problem, self._discussion_messages(messages))
+        critique = self.critic.review(
+            problem,
+            self._discussion_messages(messages),
+            search_context=search_context,
+            memory_context=memory_context,
+        )
         critique.metadata["phase"] = "evaluation_extra_round"
         messages.append(critique)
         yield self._message_event(critique)
@@ -491,26 +563,99 @@ class Supervisor:
             for character in text
         )
 
-    def _fetch_search_context(self, text: str) -> str | None:
-        if not self.search_client.enabled:
-            terminal_log("search_skip", reason="no_api_key")
-            return None
+    def _fetch_memory_context(self, text: str, phase: str) -> tuple[str | None, MemoryRecord]:
         try:
-            classification = self.search_client.classify(text, self.llm)
+            return self.memory_client.build_context(text, phase)
+        except Exception as exc:
+            terminal_log("memory_error", error=type(exc).__name__, detail=str(exc))
+            return (
+                None,
+                MemoryRecord(
+                    phase="followup" if phase == "followup" else "initial",
+                    enabled=True,
+                    status="error",
+                    error=str(exc),
+                ),
+            )
+
+    def _fetch_search_context(self, text: str, mode: str, phase: str) -> tuple[str | None, SearchRecord]:
+        normalized_mode = mode if mode in {"auto", "always", "off"} else "auto"
+        provider = self.search_client.provider if self.search_client.enabled else None
+        if normalized_mode == "off":
+            record = SearchRecord(
+                phase=phase,
+                mode="off",
+                enabled=self.search_client.enabled,
+                needed=False,
+                status="off",
+                provider=None,
+            )
+            terminal_log("search_skip", reason="off", mode=normalized_mode)
+            return None, record
+
+        if not self.search_client.enabled:
+            record = SearchRecord(
+                phase=phase,
+                mode=normalized_mode,
+                enabled=False,
+                needed=False,
+                status="error",
+                provider=None,
+                error="Search client is disabled.",
+            )
+            terminal_log("search_error", error="SearchDisabled", detail=record.error)
+            return None, record
+        queries: list[str] = []
+        try:
+            classification = self.search_client.classify(text, self.llm, mode=normalized_mode)
+            queries = classification.queries
             if not classification.needs_search:
-                terminal_log("search_skip", reason="not_needed")
-                return None
-            terminal_log("search_classify", queries=classification.queries)
-            context = self.search_client.fetch(classification.queries)
+                record = SearchRecord(
+                    phase=phase,
+                    mode=normalized_mode,
+                    enabled=True,
+                    needed=False,
+                    status="not_needed",
+                    provider=provider,
+                    queries=queries,
+                )
+                terminal_log("search_skip", reason="not_needed", mode=normalized_mode)
+                return None, record
+            terminal_log("search_classify", queries=queries)
+            context = self.search_client.fetch(queries)
+            result_count = len(context.splitlines()) if context else 0
+            status = "fetched" if context else "no_results"
             terminal_log(
                 "search_fetch",
-                queries=len(classification.queries),
-                results="no_results" if context is None else f"{len(context.splitlines())}건",
+                queries=len(queries),
+                provider=provider,
+                results="no_results" if context is None else f"{result_count}건",
             )
-            return context
+            record = SearchRecord(
+                phase=phase,
+                mode=normalized_mode,
+                enabled=True,
+                needed=True,
+                status=status,
+                provider=provider,
+                queries=queries,
+                result_count=result_count,
+                context=context,
+            )
+            return context, record
         except Exception as exc:
             terminal_log("search_error", error=type(exc).__name__, detail=str(exc))
-            return None
+            record = SearchRecord(
+                phase=phase,
+                mode=normalized_mode,
+                enabled=True,
+                needed=True,
+                status="error",
+                provider=provider,
+                queries=queries,
+                error=str(exc),
+            )
+            return None, record
 
     def _strip_korean_suffix(self, term: str) -> str:
         suffixes = (
