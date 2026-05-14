@@ -87,17 +87,28 @@ class Evaluation(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class SearchQueryNode(BaseModel):
+    query: str
+    result_count: int = 0
+    children: list["SearchQueryNode"] = Field(default_factory=list)
+    status: Literal["fetched", "no_results", "error"] = "no_results"
+    error: Optional[str] = None
+
+
 class SearchRecord(BaseModel):
-    phase: Literal["initial", "followup"]
+    phase: Literal["initial", "debate_round", "followup", "evaluation_extra_round"]
+    round_number: Optional[int] = None
     mode: Literal["auto", "always", "off"]
     enabled: bool
     needed: bool
     status: Literal["off", "not_needed", "fetched", "no_results", "error"]
     provider: Optional[str] = None
     queries: list[str] = Field(default_factory=list)
+    query_tree: list[SearchQueryNode] = Field(default_factory=list)
     result_count: int = 0
     context: Optional[str] = None
     error: Optional[str] = None
+    elapsed_ms: int = 0
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 

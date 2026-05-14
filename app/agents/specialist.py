@@ -70,7 +70,9 @@ class SpecialistAgent:
         transcript: str,
         moderator_note: str,
         round_number: int,
+        search_context: str | None = None,
     ) -> AgentMessage:
+        context_block = f"\n참고 자료 (직접 인용하거나 나열하지 말고, 페르소나 관점에서 자연스럽게 녹여서 말하세요):\n{search_context}\n" if search_context else ""
         prompt = f"""
 문제:
 {problem}
@@ -80,6 +82,7 @@ class SpecialistAgent:
 - 역할: {persona.role}
 - 관점: {persona.perspective}
 - 핵심 질문: {", ".join(persona.priority_questions)}
+{context_block}
 
 진행 메모:
 {moderator_note}

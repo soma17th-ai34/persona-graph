@@ -4,7 +4,7 @@ import html
 
 import streamlit as st
 
-from app.schemas import SolveResponse
+from app.schemas import SearchRecord, SolveResponse
 from ui.streamlit_browser import scroll_chat_to_bottom
 from ui.streamlit_common import (
     SAMPLE_PROBLEMS,
@@ -75,12 +75,60 @@ def message_item(message, personas_by_id: dict) -> dict | None:
 def chat_thread_items(response: SolveResponse, confirmed_settings: dict | None = None) -> list[dict]:
     personas_by_id = {persona.id: persona for persona in response.personas}
     items = [initial_problem_item(response)]
+    placed_search_indexes: set[int] = set()
+    round_searches: dict[tuple[str, int | None], list[tuple[int, SearchRecord]]] = {}
+    followup_searches: list[tuple[int, SearchRecord]] = []
+
+    for index, record in enumerate(response.search_records):
+        if record.phase == "initial" and index not in placed_search_indexes:
+            items.append(search_record_activity_item(record))
+            placed_search_indexes.add(index)
+        elif record.phase == "followup":
+            followup_searches.append((index, record))
+        elif record.phase in {"debate_round", "evaluation_extra_round"}:
+            round_searches.setdefault((record.phase, record.round_number), []).append((index, record))
+
     items.extend(persona_intro_item(persona) for persona in response.personas)
+    followup_search_index = 0
     for message in response.messages:
+        for index, record in searches_before_message(message, round_searches):
+            if index not in placed_search_indexes:
+                items.append(search_record_activity_item(record))
+                placed_search_indexes.add(index)
         item = message_item(message, personas_by_id)
         if item:
             items.append(item)
+        if message.stage == "user" and followup_search_index < len(followup_searches):
+            index, record = followup_searches[followup_search_index]
+            if index not in placed_search_indexes:
+                items.append(search_record_activity_item(record))
+                placed_search_indexes.add(index)
+            followup_search_index += 1
+    for index, record in enumerate(response.search_records):
+        if index not in placed_search_indexes:
+            items.append(search_record_activity_item(record))
     return items
+
+def searches_before_message(
+    message,
+    round_searches: dict[tuple[str, int | None], list[tuple[int, SearchRecord]]],
+) -> list[tuple[int, SearchRecord]]:
+    round_number = message.metadata.get("round")
+    if round_number is None:
+        return []
+    try:
+        normalized_round = int(round_number)
+    except (TypeError, ValueError):
+        return []
+
+    phase = message.metadata.get("phase")
+    if phase == "evaluation_extra_round":
+        key = ("evaluation_extra_round", normalized_round)
+    elif message.stage in {"moderator", "debate"}:
+        key = ("debate_round", normalized_round)
+    else:
+        return []
+    return round_searches.pop(key, [])
 
 def grouped_chat_thread_items(
     response: SolveResponse,
@@ -289,8 +337,178 @@ def render_agent_group(item: dict) -> None:
     )
     st.markdown("\n".join(rows), unsafe_allow_html=True)
 
+def search_record_activity_item(record: SearchRecord) -> dict:
+    root_queries = [node.query for node in record.query_tree[:3]] or list(record.queries[:3])
+    return {
+        "kind": "activity",
+        "source": "search",
+        "phase": record.phase,
+        "round_number": record.round_number,
+        "mode": record.mode,
+        "provider": record.provider or "search",
+        "status": record.status,
+        "queries": list(record.queries),
+        "query_count": len(record.queries),
+        "root_queries": root_queries,
+        "result_count": record.result_count,
+        "elapsed_ms": record.elapsed_ms,
+        "error": record.error,
+        "running": False,
+    }
+
+def format_activity_duration(elapsed_ms: int | float | None) -> str:
+    elapsed = int(elapsed_ms or 0)
+    if elapsed <= 0:
+        return "작업 기록"
+    if elapsed < 1000:
+        return "1초 미만 동안 작업"
+    total_seconds = max(1, round(elapsed / 1000))
+    minutes, seconds = divmod(total_seconds, 60)
+    if minutes:
+        return f"{minutes}분 {seconds}초 동안 작업"
+    return f"{seconds}초 동안 작업"
+
+def search_activity_title(item: dict) -> str:
+    if item.get("running"):
+        return "작업 중"
+    return format_activity_duration(item.get("elapsed_ms"))
+
+def search_activity_summary(item: dict) -> str:
+    status = str(item.get("status") or "")
+    event_type = str(item.get("event_type") or "")
+    if item.get("running"):
+        if event_type == "search_queries":
+            return "웹 검색 중"
+        return "검색 필요 여부 확인 중"
+    if status == "fetched":
+        return "검색 사용"
+    if status == "no_results":
+        return "검색 결과 없음"
+    if status == "not_needed":
+        return "검색 생략"
+    if status == "off":
+        return "검색 꺼짐"
+    if status == "error":
+        return "검색 오류"
+    return "검색 확인"
+
+def search_activity_phase_label(item: dict) -> str:
+    phase = item.get("phase")
+    round_number = item.get("round_number")
+    if phase == "debate_round":
+        return f"{round_number}라운드 검색" if round_number else "라운드 검색"
+    if phase == "evaluation_extra_round":
+        return f"{round_number}라운드 보강 검색" if round_number else "보강 검색"
+    if phase == "followup":
+        return "후속 검색"
+    return "초기 검색"
+
+def render_activity_item(item: dict) -> None:
+    if item.get("source") != "search":
+        return
+    title = search_activity_title(item)
+    summary = search_activity_summary(item)
+    phase = search_activity_phase_label(item)
+    mode = str(item.get("mode") or "auto")
+    provider = str(item.get("provider") or "search")
+    status = str(item.get("status") or "")
+    result_count = int(item.get("result_count") or 0)
+    error = str(item.get("error") or "")
+    queries = [str(query) for query in item.get("queries", []) if str(query).strip()]
+    root_queries = [str(query) for query in item.get("root_queries", []) if str(query).strip()]
+    representative_queries = root_queries[:3] or queries[:3]
+    query_count = int(item.get("query_count") or len(queries))
+    open_attribute = " open" if item.get("running") else ""
+    rows = [
+        '<div class="pg-chat-shell pg-activity-shell">',
+        '<div class="pg-activity-row">',
+        f'<details class="pg-work-activity"{open_attribute}>',
+        '<summary>',
+        f'<span class="pg-work-title">{html.escape(title)}</span>',
+        f'<span class="pg-work-summary">{html.escape(summary)}</span>',
+        '<span class="pg-work-chevron">›</span>',
+        '</summary>',
+        '<div class="pg-work-body">',
+        '<div class="pg-work-step">',
+        '<div class="pg-work-step-title">검색 판단</div>',
+        f'<div class="pg-work-step-detail">{html.escape(phase)} · {html.escape(mode)} · {html.escape(provider)}</div>',
+        '</div>',
+    ]
+    if representative_queries:
+        rows.extend(
+            [
+                '<div class="pg-work-step">',
+                '<div class="pg-work-step-title">대표 검색어</div>',
+                '<div class="pg-work-query-list">',
+                *[
+                    f'<span class="pg-work-query">{html.escape(query)}</span>'
+                    for query in representative_queries
+                ],
+                '</div>',
+                '</div>',
+            ]
+        )
+    if status == "fetched":
+        rows.extend(
+            [
+                '<div class="pg-work-step">',
+                '<div class="pg-work-step-title">검색 결과</div>',
+                f'<div class="pg-work-step-detail">총 {query_count}개 검색어를 확인했고, 중복 제거 후 {result_count}개 snippet을 사용했습니다.</div>',
+                '</div>',
+            ]
+        )
+    elif status == "no_results":
+        rows.extend(
+            [
+                '<div class="pg-work-step">',
+                '<div class="pg-work-step-title">검색 결과</div>',
+                '<div class="pg-work-step-detail">검색은 수행했지만 사용할 결과가 없었습니다.</div>',
+                '</div>',
+            ]
+        )
+    elif status == "not_needed":
+        rows.extend(
+            [
+                '<div class="pg-work-step">',
+                '<div class="pg-work-step-title">결정</div>',
+                '<div class="pg-work-step-detail">현재 질문은 내부 토론만으로 답해도 충분하다고 판단했습니다.</div>',
+                '</div>',
+            ]
+        )
+    elif status == "off":
+        rows.extend(
+            [
+                '<div class="pg-work-step">',
+                '<div class="pg-work-step-title">결정</div>',
+                '<div class="pg-work-step-detail">사용자 설정에 따라 외부 검색 없이 진행했습니다.</div>',
+                '</div>',
+            ]
+        )
+    elif status == "error":
+        rows.extend(
+            [
+                '<div class="pg-work-step">',
+                '<div class="pg-work-step-title">오류</div>',
+                f'<div class="pg-work-step-detail">{html.escape(error or "검색 없이 대화를 계속 진행했습니다.")}</div>',
+                '</div>',
+            ]
+        )
+    elif item.get("running"):
+        rows.extend(
+            [
+                '<div class="pg-work-step">',
+                '<div class="pg-work-step-title">진행 중</div>',
+                '<div class="pg-work-step-detail">검색 판단과 검색어 정리를 진행하고 있습니다.</div>',
+                '</div>',
+            ]
+        )
+    rows.extend(['</div>', '</details>', '</div>', '</div>'])
+    st.markdown("".join(rows), unsafe_allow_html=True)
+
 def render_chat_item(item: dict) -> None:
-    if item.get("kind") == "agent_group":
+    if item.get("kind") == "activity":
+        render_activity_item(item)
+    elif item.get("kind") == "agent_group":
         render_agent_group(item)
     else:
         render_chat_bubble(item)

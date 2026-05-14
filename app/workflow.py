@@ -140,6 +140,18 @@ def _log_stream_event(event: dict[str, object]) -> None:
         personas = event.get("personas", [])
         terminal_log("personas_ready", count=len(personas) if hasattr(personas, "__len__") else "?")
         return
+    if event_type in {"search_started", "search_queries", "search_finished"}:
+        terminal_log(
+            event_type,
+            phase=event.get("phase"),
+            mode=event.get("mode"),
+            provider=event.get("provider"),
+            status=event.get("status"),
+            queries=len(event.get("queries", [])) if isinstance(event.get("queries"), list) else 0,
+            results=event.get("result_count"),
+            elapsed_ms=event.get("elapsed_ms"),
+        )
+        return
     if event_type == "agent_started":
         terminal_log(
             "agent_started",

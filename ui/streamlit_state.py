@@ -27,7 +27,7 @@ def ensure_chat_state() -> None:
         "pg_confirmed_settings": None,
         "pg_clear_draft": False,
         "pg_settings": default_chat_settings(),
-        "pg_settings_policy": "ask_each_time",
+        "pg_settings_policy": "use_session_default",
         "pg_show_settings_dialog": False,
         "pg_stream_messages": [],
         "pg_stream_personas": [],

@@ -5,7 +5,6 @@ import os
 
 import streamlit as st
 
-from ui.streamlit_browser import install_config_start_hide
 from ui.streamlit_chat import render_pending_problem_thread
 from ui.streamlit_common import trim_summary
 from ui.api_client import PersonaGraphAPIError, api_base_url, load_model_catalog
@@ -165,7 +164,6 @@ def render_settings_dialog() -> None:
 def render_configuration_card() -> None:
     problem = st.session_state.get("pg_pending_problem") or ""
     render_pending_problem_thread(problem)
-    install_config_start_hide()
     with st.chat_message("assistant", avatar="assistant"):
         st.markdown(
             f"""

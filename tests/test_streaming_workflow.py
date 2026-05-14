@@ -9,8 +9,17 @@ from app.agents.moderator import ModeratorAgent
 from app.agents.specialist import SpecialistAgent
 from app.agents.supervisor import Supervisor
 from app.llm import LLMClient, LLMResult
-from app.schemas import AgentMessage, Evaluation, MemoryRecord, Persona, ReasoningRecord, SearchRecord, SolveResponse
-from app.search import Classification
+from app.schemas import (
+    AgentMessage,
+    Evaluation,
+    MemoryRecord,
+    Persona,
+    ReasoningRecord,
+    SearchQueryNode,
+    SearchRecord,
+    SolveResponse,
+)
+from app.search import Classification, SearchTreeResult
 from app.workflow import continue_discussion_stream, solve_problem_stream
 
 
@@ -90,6 +99,8 @@ class TranscriptRecordingSpecialist:
     def __init__(self):
         self.respond_transcripts = []
         self.reply_transcripts = []
+        self.respond_search_contexts = []
+        self.reply_search_contexts = []
 
     def answer(
         self,
@@ -113,8 +124,10 @@ class TranscriptRecordingSpecialist:
         transcript: str,
         moderator_note: str,
         round_number: int,
+        search_context: str | None = None,
     ) -> AgentMessage:
         self.respond_transcripts.append((persona.id, round_number, transcript))
+        self.respond_search_contexts.append((persona.id, round_number, search_context))
         return AgentMessage(
             stage="debate",
             agent_id=persona.id,
@@ -134,6 +147,7 @@ class TranscriptRecordingSpecialist:
         search_context: str | None = None,
     ) -> AgentMessage:
         self.reply_transcripts.append((persona.id, round_number, transcript))
+        self.reply_search_contexts.append((persona.id, round_number, search_context))
         return AgentMessage(
             stage="debate",
             agent_id=persona.id,
@@ -166,6 +180,20 @@ class FakeSearchClient:
     def fetch(self, queries: list[str]) -> str | None:
         self.fetch_calls.append(queries)
         return self.context
+
+    def fetch_tree(self, queries: list[str], llm) -> SearchTreeResult:
+        self.fetch_calls.append(queries)
+        result_count = len(self.context.splitlines()) if self.context else 0
+        status = "fetched" if self.context else "no_results"
+        return SearchTreeResult(
+            context=self.context,
+            queries=list(queries),
+            query_tree=[
+                SearchQueryNode(query=query, result_count=result_count, status=status)
+                for query in queries
+            ],
+            result_count=result_count,
+        )
 
 
 class FakeMemoryClient:
@@ -213,7 +241,15 @@ class FixedModerator:
             metadata={"source": "test", "phase": "opening"},
         )
 
-    def guide(self, problem, personas, transcript, round_number, focus=None) -> AgentMessage:
+    def guide(
+        self,
+        problem,
+        personas,
+        transcript,
+        round_number,
+        focus=None,
+        search_context=None,
+    ) -> AgentMessage:
         return AgentMessage(
             stage="moderator",
             agent_id="moderator",
@@ -460,6 +496,72 @@ class StreamingWorkflowTest(unittest.TestCase):
         self.assertEqual("fake", record.provider)
         self.assertIn("검색 context", record.context)
 
+    def test_initial_solve_emits_search_progress_events(self):
+        supervisor = Supervisor(LLMClient(enabled=False))
+        supervisor.search_client = FakeSearchClient(
+            Classification(needs_search=True, queries=["검색 진행 표시"], reason="test"),
+            "[검색 결과] 진행 표시 context",
+        )
+
+        events = list(
+            supervisor.solve_stream(
+                problem="검색 진행 상태를 보여줘.",
+                persona_count=3,
+                debate_rounds=1,
+                search_mode="auto",
+            )
+        )
+
+        search_events = [event for event in events if str(event.get("type", "")).startswith("search_")]
+
+        self.assertEqual(
+            [
+                "search_started",
+                "search_queries",
+                "search_finished",
+                "search_started",
+                "search_queries",
+                "search_finished",
+            ],
+            [event["type"] for event in search_events],
+        )
+        self.assertEqual("initial", search_events[0]["phase"])
+        self.assertEqual(["검색 진행 표시"], search_events[1]["queries"])
+        self.assertEqual("fake", search_events[1]["provider"])
+        self.assertEqual("fetched", search_events[2]["status"])
+        self.assertEqual(1, search_events[2]["result_count"])
+        self.assertNotIn("context", search_events[2])
+        self.assertEqual("debate_round", search_events[3]["phase"])
+        self.assertEqual(1, search_events[3]["round_number"])
+
+    def test_round_search_records_are_saved_and_passed_as_accumulated_context(self):
+        supervisor = Supervisor(LLMClient(enabled=False))
+        specialist = TranscriptRecordingSpecialist()
+        supervisor.specialist = specialist
+        supervisor.search_client = FakeSearchClient(
+            Classification(needs_search=True, queries=["공용 검색"], reason="test"),
+            "[검색 결과] 누적 context",
+        )
+
+        events = list(
+            supervisor.solve_stream(
+                problem="라운드마다 검색 context를 공유한다.",
+                persona_count=3,
+                debate_rounds=2,
+                search_mode="auto",
+            )
+        )
+
+        records = events[-1]["response"].search_records
+
+        self.assertEqual(["initial", "debate_round", "debate_round"], [record.phase for record in records])
+        self.assertEqual([None, 1, 2], [record.round_number for record in records])
+        self.assertEqual(["fetched", "fetched", "fetched"], [record.status for record in records])
+        self.assertTrue(all(record.query_tree for record in records))
+        round_contexts = [context for _, _, context in specialist.respond_search_contexts]
+        self.assertEqual(6, len(round_contexts))
+        self.assertTrue(all(context and "누적 context" in context for context in round_contexts))
+
     def test_initial_solve_records_memory_and_passes_context_to_quality_agents(self):
         memory_context = "선별 품질 메모리: 근거 없는 하드웨어 구매 전제를 피하세요."
         supervisor = self._recording_supervisor(memory_context)
@@ -609,8 +711,9 @@ class StreamingWorkflowTest(unittest.TestCase):
             )
         )
 
-        first_message = events[0]["message"]
-        self.assertEqual("agent_message", events[0]["type"])
+        first_message_event = next(event for event in events if event["type"] == "agent_message")
+        first_message = first_message_event["message"]
+        self.assertEqual("search_started", events[0]["type"])
         self.assertEqual("user", first_message.stage)
         self.assertEqual("final_response", events[-1]["type"])
 
@@ -740,6 +843,12 @@ class StreamingWorkflowTest(unittest.TestCase):
         self.assertEqual("fetched", records[1].status)
         self.assertEqual(["후속 검색"], records[1].queries)
         self.assertIn("저장될 context", records[1].context)
+
+        search_events = [event for event in events if str(event.get("type", "")).startswith("search_")]
+        self.assertEqual(["search_started", "search_queries", "search_finished"], [event["type"] for event in search_events])
+        self.assertEqual("followup", search_events[0]["phase"])
+        self.assertEqual(["후속 검색"], search_events[1]["queries"])
+        self.assertEqual("fetched", search_events[2]["status"])
 
     def test_followup_appends_memory_record(self):
         personas = [
@@ -1140,6 +1249,43 @@ class StreamingWorkflowTest(unittest.TestCase):
         self.assertTrue(final_message.metadata["extra_round_used"])
         self.assertEqual(2, len(final_message.metadata["quality_check_history"]))
         self.assertTrue(response.evaluation.metadata["quality_check"]["passed"])
+
+    def test_extra_round_adds_evaluation_search_before_extra_agents(self):
+        supervisor = Supervisor(LLMClient(enabled=False))
+        evaluator = ExtraRoundEvaluator()
+        supervisor.evaluator = evaluator
+        supervisor.search_client = FakeSearchClient(
+            Classification(needs_search=True, queries=["보강 검색"], reason="test"),
+            "[보강 결과] extra context",
+        )
+
+        events = list(
+            supervisor.solve_stream(
+                problem="탑 챔피언을 선픽 기준과 초보자 기준으로 추천해줘.",
+                persona_count=3,
+                debate_rounds=1,
+                search_mode="auto",
+            )
+        )
+
+        response = events[-1]["response"]
+        phases = [record.phase for record in response.search_records]
+        extra_search_index = next(
+            index
+            for index, event in enumerate(events)
+            if event.get("type") == "search_started"
+            and event.get("phase") == "evaluation_extra_round"
+        )
+        next_agent = next(
+            event
+            for event in events[extra_search_index + 1 :]
+            if event.get("type") == "agent_started"
+        )
+
+        self.assertEqual(["initial", "debate_round", "evaluation_extra_round"], phases)
+        self.assertEqual(2, response.search_records[-1].round_number)
+        self.assertEqual("moderator", next_agent["stage"])
+        self.assertEqual(2, next_agent["round"])
 
 
 if __name__ == "__main__":

@@ -48,9 +48,11 @@ class ModeratorAgent:
         transcript: str,
         round_number: int,
         focus: str | None = None,
+        search_context: str | None = None,
     ) -> AgentMessage:
         panel = self._persona_panel(personas)
         focus_text = focus or "없음"
+        context_block = f"\n검색/리서치 근거:\n{search_context}\n" if search_context else ""
         prompt = f"""
 문제:
 {problem}
@@ -60,6 +62,7 @@ class ModeratorAgent:
 
 지금까지의 토론:
 {transcript}
+{context_block}
 
 이번 라운드에서 반드시 좁힐 부족한 지점:
 {focus_text}

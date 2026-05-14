@@ -7,12 +7,12 @@ import streamlit as st
 
 from app.schemas import SolveResponse
 from ui.api_client import PersonaGraphAPIError, stream_continue_discussion, stream_solve_problem
-from ui.streamlit_browser import scroll_chat_to_bottom
 from ui.streamlit_chat import (
     agent_group_key,
     group_agent_items,
     message_item,
     persona_intro_item,
+    render_activity_item,
     render_chat_bubble,
     render_chat_item,
     render_chat_thread,
@@ -24,6 +24,46 @@ from ui.streamlit_common import (
     live_message_frames,
     system_avatar_label,
 )
+
+
+SEARCH_EVENT_TYPES = {"search_started", "search_queries", "search_finished"}
+
+
+def update_search_activity(activity: dict | None, event: dict) -> dict:
+    now = time.monotonic()
+    if activity is None or event.get("type") == "search_started":
+        activity = {"started_at": now, "events": []}
+    activity["events"].append(event)
+    if event.get("type") == "search_finished":
+        activity["finished_at"] = now
+    return activity
+
+
+def search_activity_item(activity: dict | None) -> dict | None:
+    if not activity or not activity.get("events"):
+        return None
+    latest = activity["events"][-1]
+    finished_at = activity.get("finished_at")
+    elapsed_ms = latest.get("elapsed_ms")
+    if elapsed_ms is None:
+        elapsed_ms = int(((finished_at or time.monotonic()) - activity["started_at"]) * 1000)
+    return {
+        "kind": "activity",
+        "source": "search",
+        "phase": latest.get("phase"),
+        "round_number": latest.get("round_number"),
+        "mode": latest.get("mode"),
+        "provider": latest.get("provider") or "search",
+        "status": latest.get("status") or "",
+        "queries": latest.get("queries", []),
+        "query_count": latest.get("query_count") or len(latest.get("queries", [])),
+        "root_queries": latest.get("root_queries", latest.get("queries", [])[:3]),
+        "result_count": latest.get("result_count") or 0,
+        "elapsed_ms": elapsed_ms,
+        "error": latest.get("error"),
+        "event_type": latest.get("type"),
+        "running": latest.get("type") != "search_finished",
+    }
 
 
 def render_active_agent_status(active_agent, personas_by_id: dict) -> None:
@@ -66,8 +106,11 @@ def render_streaming_chat_thread(
     keep_agent_group_expanded: bool = False,
     expanded_agent_group_key: str | None = None,
     render_context: bool = True,
+    search_activity: dict | None = None,
 ) -> None:
     with placeholder.container():
+        activity_item = search_activity_item(search_activity)
+        render_initial_activity = render_context and base_response is None and activity_item is not None
         if render_context:
             if base_response is not None:
                 render_chat_thread(
@@ -77,6 +120,9 @@ def render_streaming_chat_thread(
                 )
             elif pending_problem:
                 render_pending_problem_thread(pending_problem)
+
+        if render_initial_activity:
+            render_activity_item(activity_item)
 
         if render_context and base_response is None:
             for persona in live_personas:
@@ -104,9 +150,10 @@ def render_streaming_chat_thread(
             expanded_group_key=expanded_agent_group_key,
         ):
             render_chat_item(item)
+        if activity_item is not None and not render_initial_activity:
+            render_activity_item(activity_item)
         st.markdown('<div id="pg-chat-bottom" class="pg-scroll-anchor"></div>', unsafe_allow_html=True)
         render_active_agent_status(active_event, personas_by_id)
-        scroll_chat_to_bottom(smooth=False)
 
 def consume_chat_stream(
     events,
@@ -117,6 +164,7 @@ def consume_chat_stream(
     live_messages = []
     live_personas = list(initial_personas or [])
     active_event = None
+    search_activity = None
     keep_agent_group_expanded = False
     expanded_agent_group_key = None
     final_response = None
@@ -140,6 +188,7 @@ def consume_chat_stream(
         keep_agent_group_expanded=keep_agent_group_expanded,
         expanded_agent_group_key=expanded_agent_group_key,
         render_context=render_context,
+        search_activity=search_activity,
     )
 
     for event in events:
@@ -196,11 +245,14 @@ def consume_chat_stream(
                             keep_agent_group_expanded=keep_agent_group_expanded,
                             expanded_agent_group_key=expanded_agent_group_key,
                             render_context=render_context,
+                            search_activity=search_activity,
                         )
                         rendered_this_event = True
                         time.sleep(0.025)
                     live_messages.append(message)
                     active_event = None
+        elif event_type in SEARCH_EVENT_TYPES:
+            search_activity = update_search_activity(search_activity, event)
         elif event_type == "final_response":
             final_response = event.get("response")
             active_event = None
@@ -219,6 +271,7 @@ def consume_chat_stream(
                 keep_agent_group_expanded=keep_agent_group_expanded,
                 expanded_agent_group_key=expanded_agent_group_key,
                 render_context=render_context,
+                search_activity=search_activity,
             )
 
     return final_response
