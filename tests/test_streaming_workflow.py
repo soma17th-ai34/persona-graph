@@ -713,7 +713,7 @@ class StreamingWorkflowTest(unittest.TestCase):
 
         first_message_event = next(event for event in events if event["type"] == "agent_message")
         first_message = first_message_event["message"]
-        self.assertEqual("search_started", events[0]["type"])
+        self.assertEqual("agent_message", events[0]["type"])
         self.assertEqual("user", first_message.stage)
         self.assertEqual("final_response", events[-1]["type"])
 
@@ -845,7 +845,18 @@ class StreamingWorkflowTest(unittest.TestCase):
         self.assertIn("저장될 context", records[1].context)
 
         search_events = [event for event in events if str(event.get("type", "")).startswith("search_")]
+        user_event_index = next(
+            index
+            for index, event in enumerate(events)
+            if event.get("type") == "agent_message" and event["message"].stage == "user"
+        )
+        first_search_index = next(
+            index
+            for index, event in enumerate(events)
+            if str(event.get("type", "")).startswith("search_")
+        )
         self.assertEqual(["search_started", "search_queries", "search_finished"], [event["type"] for event in search_events])
+        self.assertLess(user_event_index, first_search_index)
         self.assertEqual("followup", search_events[0]["phase"])
         self.assertEqual(["후속 검색"], search_events[1]["queries"])
         self.assertEqual("fetched", search_events[2]["status"])

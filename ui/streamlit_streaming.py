@@ -29,17 +29,23 @@ from ui.streamlit_common import (
 SEARCH_EVENT_TYPES = {"search_started", "search_queries", "search_finished"}
 
 
-def update_search_activity(activity: dict | None, event: dict) -> dict:
+def update_search_activities(activities: list[dict], event: dict) -> list[dict]:
     now = time.monotonic()
-    if activity is None or event.get("type") == "search_started":
+    if event.get("type") == "search_started" or not activities:
         activity = {"started_at": now, "events": []}
+        activities.append(activity)
+    else:
+        activity = next(
+            (candidate for candidate in reversed(activities) if "finished_at" not in candidate),
+            activities[-1],
+        )
     activity["events"].append(event)
     if event.get("type") == "search_finished":
         activity["finished_at"] = now
-    return activity
+    return activities
 
 
-def search_activity_item(activity: dict | None) -> dict | None:
+def search_activity_item(activity: dict | None, activity_index: int | None = None) -> dict | None:
     if not activity or not activity.get("events"):
         return None
     latest = activity["events"][-1]
@@ -63,7 +69,73 @@ def search_activity_item(activity: dict | None) -> dict | None:
         "error": latest.get("error"),
         "event_type": latest.get("type"),
         "running": latest.get("type") != "search_finished",
+        "activity_index": activity_index,
     }
+
+
+def search_activity_items(activities: list[dict] | None) -> list[dict]:
+    return [
+        item
+        for item in (
+            search_activity_item(activity, index)
+            for index, activity in enumerate(activities or [])
+        )
+        if item is not None
+    ]
+
+
+def insert_streaming_activity_items(message_items: list[dict], activity_items: list[dict]) -> list[dict]:
+    items: list[dict] = []
+    placed_indexes: set[int] = set()
+
+    def pending_before(message_item: dict) -> list[dict]:
+        round_number = message_item.get("round")
+        if round_number is None:
+            return []
+        matches = []
+        for activity in activity_items:
+            index = activity.get("activity_index")
+            if index in placed_indexes:
+                continue
+            if activity.get("round_number") != round_number:
+                continue
+            if activity.get("phase") == "debate_round" and message_item.get("stage") in {
+                "moderator",
+                "debate",
+            }:
+                matches.append(activity)
+            elif (
+                activity.get("phase") == "evaluation_extra_round"
+                and message_item.get("phase") == "evaluation_extra_round"
+            ):
+                matches.append(activity)
+        return matches
+
+    def pending_after(message_item: dict) -> list[dict]:
+        if message_item.get("kind") != "user":
+            return []
+        return [
+            activity
+            for activity in activity_items
+            if activity.get("activity_index") not in placed_indexes
+            and activity.get("phase") == "followup"
+        ]
+
+    for message_item in message_items:
+        for activity in pending_before(message_item):
+            items.append(activity)
+            placed_indexes.add(activity["activity_index"])
+        items.append(message_item)
+        for activity in pending_after(message_item):
+            items.append(activity)
+            placed_indexes.add(activity["activity_index"])
+
+    for activity in activity_items:
+        index = activity.get("activity_index")
+        if index not in placed_indexes:
+            items.append(activity)
+            placed_indexes.add(index)
+    return items
 
 
 def render_active_agent_status(active_agent, personas_by_id: dict) -> None:
@@ -106,11 +178,18 @@ def render_streaming_chat_thread(
     keep_agent_group_expanded: bool = False,
     expanded_agent_group_key: str | None = None,
     render_context: bool = True,
-    search_activity: dict | None = None,
+    search_activities: list[dict] | None = None,
 ) -> None:
     with placeholder.container():
-        activity_item = search_activity_item(search_activity)
-        render_initial_activity = render_context and base_response is None and activity_item is not None
+        activity_items = search_activity_items(search_activities)
+        initial_activity_items = [
+            item
+            for item in activity_items
+            if render_context and base_response is None and item.get("phase") == "initial"
+        ]
+        timeline_activity_items = [
+            item for item in activity_items if item not in initial_activity_items
+        ]
         if render_context:
             if base_response is not None:
                 render_chat_thread(
@@ -121,7 +200,7 @@ def render_streaming_chat_thread(
             elif pending_problem:
                 render_pending_problem_thread(pending_problem)
 
-        if render_initial_activity:
+        for activity_item in initial_activity_items:
             render_activity_item(activity_item)
 
         if render_context and base_response is None:
@@ -144,14 +223,13 @@ def render_streaming_chat_thread(
             streaming_message is not None
             and streaming_message.stage in {"specialist", "debate"}
         )
+        timeline_items = insert_streaming_activity_items(message_items, timeline_activity_items)
         for item in group_agent_items(
-            message_items,
+            timeline_items,
             expand_last_group=is_streaming_agent_message or keep_agent_group_expanded,
             expanded_group_key=expanded_agent_group_key,
         ):
             render_chat_item(item)
-        if activity_item is not None and not render_initial_activity:
-            render_activity_item(activity_item)
         st.markdown('<div id="pg-chat-bottom" class="pg-scroll-anchor"></div>', unsafe_allow_html=True)
         render_active_agent_status(active_event, personas_by_id)
 
@@ -164,7 +242,7 @@ def consume_chat_stream(
     live_messages = []
     live_personas = list(initial_personas or [])
     active_event = None
-    search_activity = None
+    search_activities = []
     keep_agent_group_expanded = False
     expanded_agent_group_key = None
     final_response = None
@@ -188,7 +266,7 @@ def consume_chat_stream(
         keep_agent_group_expanded=keep_agent_group_expanded,
         expanded_agent_group_key=expanded_agent_group_key,
         render_context=render_context,
-        search_activity=search_activity,
+        search_activities=search_activities,
     )
 
     for event in events:
@@ -245,14 +323,14 @@ def consume_chat_stream(
                             keep_agent_group_expanded=keep_agent_group_expanded,
                             expanded_agent_group_key=expanded_agent_group_key,
                             render_context=render_context,
-                            search_activity=search_activity,
+                            search_activities=search_activities,
                         )
                         rendered_this_event = True
                         time.sleep(0.025)
                     live_messages.append(message)
                     active_event = None
         elif event_type in SEARCH_EVENT_TYPES:
-            search_activity = update_search_activity(search_activity, event)
+            search_activities = update_search_activities(search_activities, event)
         elif event_type == "final_response":
             final_response = event.get("response")
             active_event = None
@@ -271,7 +349,7 @@ def consume_chat_stream(
                 keep_agent_group_expanded=keep_agent_group_expanded,
                 expanded_agent_group_key=expanded_agent_group_key,
                 render_context=render_context,
-                search_activity=search_activity,
+                search_activities=search_activities,
             )
 
     return final_response

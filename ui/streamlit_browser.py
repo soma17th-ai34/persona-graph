@@ -53,7 +53,6 @@ def install_composer_autosize() -> None:
       root.querySelectorAll(
         ".pg-chat-shell:not(.pg-activity-shell), " +
         ".pg-agent-group-details, " +
-        "div[data-testid='stVerticalBlock']:has(.pg-empty-samples-anchor), " +
         ".pg-empty-state"
       )
     ).find(function (node) {

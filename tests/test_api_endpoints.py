@@ -249,7 +249,7 @@ class APIEndpointTest(unittest.TestCase):
             events = self._read_events(response)
 
         first_message_event = next(event for event in events if event["type"] == "agent_message")
-        self.assertEqual("search_started", events[0]["type"])
+        self.assertEqual("agent_message", events[0]["type"])
         self.assertEqual("user", first_message_event["message"]["stage"])
         self.assertEqual("final_response", events[-1]["type"])
         self.assertEqual(run_id, events[-1]["response"]["run_id"])

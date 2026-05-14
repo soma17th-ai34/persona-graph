@@ -457,37 +457,6 @@ div[data-testid="stDialog"] div[role="dialog"] {
   margin-top: 0.68rem;
 }
 
-.st-key-pg_empty_samples,
-div[data-testid="stVerticalBlock"]:has(.pg-empty-samples-anchor) {
-  max-width: 42rem;
-  margin: 0 auto 1.15rem;
-  padding: 0 1rem;
-}
-
-.st-key-pg_empty_samples div[data-testid="stElementContainer"]:has(.pg-empty-samples-anchor),
-div[data-testid="stElementContainer"]:has(.pg-empty-samples-anchor) {
-  display: none !important;
-}
-
-.st-key-pg_empty_samples div[data-testid="stButton"] > button,
-div[data-testid="stVerticalBlock"]:has(.pg-empty-samples-anchor) div[data-testid="stButton"] > button {
-  min-height: 2.25rem !important;
-  border: 1px solid var(--pg-border-default) !important;
-  border-radius: var(--pg-radius-full) !important;
-  background: var(--pg-bg-surface-subtle) !important;
-  color: var(--pg-text-secondary) !important;
-  padding: 0.32rem 0.72rem !important;
-  font-size: 0.82rem !important;
-  line-height: 1.2 !important;
-}
-
-.st-key-pg_empty_samples div[data-testid="stButton"] > button:hover,
-div[data-testid="stVerticalBlock"]:has(.pg-empty-samples-anchor) div[data-testid="stButton"] > button:hover {
-  border-color: var(--pg-border-strong) !important;
-  background: var(--pg-bg-surface-muted) !important;
-  color: var(--pg-text-primary) !important;
-}
-
 .pg-chat-thread {
   display: flex;
   flex-direction: column;

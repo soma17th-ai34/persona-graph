@@ -190,25 +190,7 @@ class Supervisor:
         max_agents: int = 2,
         search_mode: str = "auto",
     ):
-        search_context, search_record = yield from self._fetch_search_context_stream(
-            text=user_content,
-            mode=search_mode,
-            phase="followup",
-        )
-        previous_search_context = self._context_from_search_records(response.search_records)
-        research_context = self._merge_search_context(previous_search_context, search_context)
-        search_records = [*response.search_records, search_record]
-        memory_context, memory_record = self._fetch_memory_context(
-            f"{response.problem}\n{user_content}",
-            "followup",
-        )
         round_number = self._next_round(response.messages)
-        selected_personas = self._select_reply_personas(
-            personas=response.personas,
-            user_content=user_content,
-            max_agents=max_agents,
-            round_number=round_number,
-        )
         user_message = AgentMessage(
             stage="user",
             agent_id="user",
@@ -223,6 +205,24 @@ class Supervisor:
         )
         yield self._message_event(user_message)
 
+        search_context, search_record = yield from self._fetch_search_context_stream(
+            text=user_content,
+            mode=search_mode,
+            phase="followup",
+        )
+        previous_search_context = self._context_from_search_records(response.search_records)
+        research_context = self._merge_search_context(previous_search_context, search_context)
+        search_records = [*response.search_records, search_record]
+        memory_context, memory_record = self._fetch_memory_context(
+            f"{response.problem}\n{user_content}",
+            "followup",
+        )
+        selected_personas = self._select_reply_personas(
+            personas=response.personas,
+            user_content=user_content,
+            max_agents=max_agents,
+            round_number=round_number,
+        )
         messages = [*response.messages, user_message]
         round_transcript = self._format_transcript(messages)
         agent_replies: list[AgentMessage] = []

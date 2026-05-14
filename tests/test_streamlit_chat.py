@@ -14,6 +14,7 @@ from ui.streamlit_chat import (
     moderator_summary,
     search_record_activity_item,
 )
+from ui.streamlit_streaming import insert_streaming_activity_items
 
 
 class StreamlitChatRenderingTest(unittest.TestCase):
@@ -177,6 +178,77 @@ class StreamlitChatRenderingTest(unittest.TestCase):
 
         self.assertEqual(2, item["query_count"])
         self.assertEqual(["root query"], item["root_queries"])
+
+    def test_streaming_search_activity_stays_before_matching_round(self):
+        items = insert_streaming_activity_items(
+            [
+                {
+                    "kind": "system",
+                    "stage": "moderator",
+                    "content": "opening",
+                },
+                {
+                    "kind": "agent",
+                    "stage": "specialist",
+                    "content": "initial opinion",
+                    "groupable": True,
+                },
+                {
+                    "kind": "system",
+                    "stage": "moderator",
+                    "round": 1,
+                    "phase": "response_round",
+                    "content": "round one",
+                },
+            ],
+            [
+                {
+                    "kind": "activity",
+                    "activity_index": 0,
+                    "phase": "debate_round",
+                    "round_number": 1,
+                }
+            ],
+        )
+
+        activity_index = self._activity_index(items, "debate_round")
+        initial_index = self._content_index(items, "initial opinion")
+        round_index = self._content_index(items, "round one")
+
+        self.assertGreater(activity_index, initial_index)
+        self.assertLess(activity_index, round_index)
+
+    def test_streaming_followup_search_activity_stays_after_user_message(self):
+        items = insert_streaming_activity_items(
+            [
+                {
+                    "kind": "user",
+                    "content": "후속 의견",
+                },
+                {
+                    "kind": "agent",
+                    "stage": "debate",
+                    "round": 2,
+                    "phase": "user_response",
+                    "content": "followup reply",
+                    "groupable": True,
+                },
+            ],
+            [
+                {
+                    "kind": "activity",
+                    "activity_index": 0,
+                    "phase": "followup",
+                }
+            ],
+        )
+
+        activity_index = self._activity_index(items, "followup")
+        user_index = self._content_index(items, "후속 의견")
+        reply_index = self._content_index(items, "followup reply")
+
+        self.assertGreater(activity_index, user_index)
+        self.assertLess(activity_index, reply_index)
 
     def _activity_index(self, items: list[dict], phase: str) -> int:
         return next(

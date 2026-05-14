@@ -7,7 +7,6 @@ import streamlit as st
 from app.schemas import SearchRecord, SolveResponse
 from ui.streamlit_browser import scroll_chat_to_bottom
 from ui.streamlit_common import (
-    SAMPLE_PROBLEMS,
     avatar_markup,
     character_class,
     character_for_persona,
@@ -538,15 +537,7 @@ def render_pending_problem_thread(problem: str) -> None:
         }
     )
 
-def fill_sample_problem(problem: str) -> None:
-    st.session_state["pg_empty_prompt_text"] = problem
-
 def render_empty_state() -> None:
-    samples = [
-        ("AI 프로젝트 MVP", SAMPLE_PROBLEMS["Software Maestro 프로젝트 선정"]),
-        ("팀 프로젝트 계획", SAMPLE_PROBLEMS["캠퍼스 팀 프로젝트 리스크"]),
-        ("Physical AI 검증", SAMPLE_PROBLEMS["Physical AI 아이디어 검증"]),
-    ]
     st.markdown(
         """
 <div class="pg-empty-state">
@@ -556,15 +547,3 @@ def render_empty_state() -> None:
 """,
         unsafe_allow_html=True,
     )
-    with st.container(key="pg_empty_samples"):
-        st.markdown('<span class="pg-empty-samples-anchor"></span>', unsafe_allow_html=True)
-        cols = st.columns(3, gap="small")
-        for index, (label, problem) in enumerate(samples):
-            with cols[index]:
-                st.button(
-                    label,
-                    key=f"pg_sample_problem_{index}",
-                    use_container_width=True,
-                    on_click=fill_sample_problem,
-                    args=(problem,),
-                )
