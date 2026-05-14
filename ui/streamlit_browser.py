@@ -27,6 +27,7 @@ def install_composer_autosize() -> None:
   const root = window.parent.document;
   const minHeight = 41;
   const maxHeight = 132;
+  const layoutVersion = "chat-column-v2";
 
   function composerTextareas() {
     return root.querySelectorAll(
@@ -40,6 +41,47 @@ def install_composer_autosize() -> None:
       'div[data-testid="stForm"]:has(.pg-empty-composer-anchor), ' +
       'div[data-testid="stForm"]:has(.pg-docked-composer-anchor)'
     );
+  }
+
+  function updateLayoutVars() {
+    const sidebar = root.querySelector('section[data-testid="stSidebar"]');
+    const sidebarRect = sidebar ? sidebar.getBoundingClientRect() : null;
+    const sidebarWidth = sidebarRect && sidebarRect.width > 48 ? Math.round(sidebarRect.width) : 0;
+    root.documentElement.style.setProperty("--pg-sidebar-live-width", sidebarWidth + "px");
+
+    const chatAnchor = Array.from(
+      root.querySelectorAll(
+        ".pg-chat-shell:not(.pg-activity-shell), " +
+        ".pg-agent-group-details, " +
+        "div[data-testid='stVerticalBlock']:has(.pg-empty-samples-anchor), " +
+        ".pg-empty-state"
+      )
+    ).find(function (node) {
+      const rect = node.getBoundingClientRect();
+      return rect.width > 240 && rect.height > 0;
+    });
+    if (chatAnchor) {
+      const rect = chatAnchor.getBoundingClientRect();
+      const width = Math.min(780, Math.max(280, Math.round(rect.width)));
+      root.documentElement.style.setProperty("--pg-chat-live-left", Math.round(rect.left + rect.width / 2) + "px");
+      root.documentElement.style.setProperty("--pg-chat-live-width", width + "px");
+    } else {
+      const main = root.querySelector('div[data-testid="stAppViewContainer"] .main');
+      const rect = main ? main.getBoundingClientRect() : { left: 0, width: window.parent.innerWidth };
+      const width = Math.min(780, Math.max(280, Math.round(rect.width - 32)));
+      root.documentElement.style.setProperty("--pg-chat-live-left", Math.round(rect.left + rect.width / 2) + "px");
+      root.documentElement.style.setProperty("--pg-chat-live-width", width + "px");
+    }
+
+    const dockedForm = root.querySelector('div[data-testid="stForm"]:has(.pg-docked-composer-anchor)');
+    if (!dockedForm) {
+      root.documentElement.style.setProperty("--pg-composer-safe-space", "6rem");
+      return;
+    }
+    const rect = dockedForm.getBoundingClientRect();
+    const bottomGap = Math.max(0, window.parent.innerHeight - rect.bottom);
+    const safeSpace = Math.max(82, Math.ceil(rect.height + bottomGap + 16));
+    root.documentElement.style.setProperty("--pg-composer-safe-space", safeSpace + "px");
   }
 
   function hideFocusedSubmitHint() {
@@ -101,17 +143,36 @@ def install_composer_autosize() -> None:
   function resizeAll() {
     composerTextareas().forEach(wire);
     hideFocusedSubmitHint();
+    updateLayoutVars();
+  }
+
+  function scheduleLayoutRefresh() {
+    updateLayoutVars();
+    window.setTimeout(updateLayoutVars, 120);
+    window.setTimeout(updateLayoutVars, 360);
+    window.setTimeout(updateLayoutVars, 800);
   }
 
   if (!window.parent.__pgComposerAutosizeInstalled) {
     window.parent.__pgComposerAutosizeInstalled = true;
     window.parent.addEventListener("resize", resizeAll);
     const observer = new MutationObserver(resizeAll);
-    observer.observe(root.body, { childList: true, subtree: true });
+    observer.observe(root.body, { attributes: true, childList: true, subtree: true });
   }
+  if (window.parent.__pgComposerLayoutInterval) {
+    window.parent.clearInterval(window.parent.__pgComposerLayoutInterval);
+  }
+  if (window.parent.__pgComposerLayoutClickListener) {
+    root.removeEventListener("click", window.parent.__pgComposerLayoutClickListener, true);
+  }
+  window.parent.__pgComposerLayoutInterval = window.parent.setInterval(updateLayoutVars, 400);
+  window.parent.__pgComposerLayoutClickListener = scheduleLayoutRefresh;
+  window.parent.__pgComposerLayoutIntervalVersion = layoutVersion;
+  root.addEventListener("click", scheduleLayoutRefresh, true);
 
   window.setTimeout(resizeAll, 0);
   window.setTimeout(resizeAll, 120);
+  window.setTimeout(scheduleLayoutRefresh, 320);
 })();
 </script>
 """,

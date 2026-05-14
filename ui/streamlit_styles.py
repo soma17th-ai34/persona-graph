@@ -54,8 +54,12 @@ def render_chat_styles() -> None:
   --pg-radius-xl: 20px;
   --pg-radius-full: 999px;
   --pg-chat-max-width: 780px;
-  --pg-composer-max-width: 820px;
+  --pg-composer-max-width: 780px;
+  --pg-composer-safe-space: 6rem;
+  --pg-chat-live-left: 50vw;
+  --pg-chat-live-width: min(var(--pg-chat-max-width), calc(100vw - 2rem));
   --pg-sidebar-width: 16.25rem;
+  --pg-sidebar-live-width: var(--pg-sidebar-width);
 }
 
 html,
@@ -102,7 +106,7 @@ div[data-testid="stMainBlockContainer"] {
   width: 100%;
   min-height: 100vh;
   padding: 0 !important;
-  padding-bottom: 8.8rem !important;
+  padding-bottom: var(--pg-composer-safe-space) !important;
 }
 
 section[data-testid="stSidebar"] {
@@ -780,9 +784,9 @@ div[data-testid="stElementContainer"]:has(.pg-docked-composer-anchor) {
 div[data-testid="stForm"]:has(.pg-docked-composer-anchor) {
   position: fixed;
   z-index: 50;
-  left: 50%;
+  left: var(--pg-chat-live-left);
   transform: translateX(-50%);
-  width: min(var(--pg-composer-max-width), calc(100vw - 2rem));
+  width: min(var(--pg-composer-max-width), var(--pg-chat-live-width), calc(100vw - 2rem));
   bottom: 1.05rem;
 }
 
@@ -984,16 +988,123 @@ div[data-testid="stBottomBlockContainer"] {
   line-height: 1.45;
 }
 
+.pg-chat-shell.pg-activity-shell {
+  margin: 0.1rem auto 0.55rem auto;
+}
+
+.pg-activity-row {
+  width: calc(100% - 3.45rem);
+  margin-left: 3.45rem;
+}
+
+.pg-work-activity {
+  display: inline-block;
+  max-width: 100%;
+  color: var(--pg-text-muted);
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+
+.pg-work-activity summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.42rem;
+  cursor: pointer;
+  list-style: none;
+  color: var(--pg-text-muted);
+  font-weight: 700;
+  user-select: none;
+}
+
+.pg-work-activity summary::-webkit-details-marker {
+  display: none;
+}
+
+.pg-work-activity summary:hover {
+  color: var(--pg-text-secondary);
+}
+
+.pg-work-title {
+  color: inherit;
+}
+
+.pg-work-summary {
+  color: var(--pg-text-muted);
+  font-size: 0.82rem;
+  font-weight: 650;
+}
+
+.pg-work-chevron {
+  display: inline-flex;
+  transform: translateY(-0.01rem);
+  color: var(--pg-text-muted);
+  font-size: 1rem;
+  transition: transform 120ms ease;
+}
+
+.pg-work-activity[open] .pg-work-chevron {
+  transform: rotate(90deg);
+}
+
+.pg-work-body {
+  margin-top: 0.72rem;
+  border-top: 1px solid var(--pg-border-default);
+  padding-top: 0.68rem;
+}
+
+.pg-work-step + .pg-work-step {
+  margin-top: 0.62rem;
+}
+
+.pg-work-step-title {
+  color: var(--pg-text-primary);
+  font-size: 0.82rem;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.pg-work-step-detail {
+  color: var(--pg-text-secondary);
+  font-size: 0.8rem;
+  line-height: 1.5;
+  margin-top: 0.14rem;
+}
+
+.pg-work-query-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.34rem;
+  margin-top: 0.42rem;
+}
+
+.pg-work-query {
+  display: inline-flex;
+  max-width: 100%;
+  border: 1px solid var(--pg-border-default);
+  border-radius: var(--pg-radius-full);
+  background: var(--pg-bg-surface-muted);
+  color: var(--pg-text-secondary);
+  padding: 0.2rem 0.46rem;
+  font-size: 0.76rem;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
 .pg-scroll-anchor {
   width: 1px;
   height: 1px;
-  scroll-margin-bottom: 8rem;
+  pointer-events: none;
+  scroll-margin-bottom: var(--pg-composer-safe-space);
 }
 
 @media (max-width: 720px) {
   .pg-chat-bubble,
   .pg-active-status {
     max-width: 86%;
+  }
+  .pg-activity-row {
+    width: calc(100% - 2.55rem);
+    margin-left: 2.55rem;
   }
   div[data-testid="stChatMessage"]:has(.pg-config-bubble-anchor) [data-testid="stChatMessageContent"],
   div[data-testid="stChatMessage"]:has(.pg-config-bubble-anchor) > div:last-child {
@@ -1007,9 +1118,6 @@ div[data-testid="stBottomBlockContainer"] {
   div[data-testid="stForm"]:has(.pg-empty-composer-anchor),
   div[data-testid="stForm"]:has(.pg-docked-composer-anchor) {
     width: calc(100vw - 1.6rem);
-  }
-  div[data-testid="stForm"]:has(.pg-docked-composer-anchor) {
-    left: 50%;
   }
   .pg-empty-state {
     min-height: 38vh;
